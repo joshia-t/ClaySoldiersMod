@@ -1,0 +1,102 @@
+buildscript {
+    repositories {
+        jcenter()
+        maven {
+            name = "forge"
+            url = "http://files.minecraftforge.net/maven"
+        }
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:2.3-SNAPSHOT'
+    }
+}
+apply plugin: 'net.minecraftforge.gradle.forge'
+
+apply plugin: 'idea'
+idea {
+    module {
+        inheritOutputDirs = true
+    }
+    project {
+        languageLevel = '1.8' //due to a bug in gradle or IDEA, this doesn't work :(
+    }
+}
+
+version = "1.12.2-3.0.0-beta.2"
+group = "de.sanandrew.mods"
+archivesBaseName = "ClaySoldiersMod"
+
+sourceCompatibility = targetCompatibility = "1.8" // Need this here so eclipse task generates correctly.
+compileJava {
+    sourceCompatibility = targetCompatibility = "1.8"
+}
+
+minecraft {
+    version = "1.12.2-14.23.4.2747"
+    runDir = "run"
+    mappings = "snapshot_20180301"
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        url = "http://dvs1.progwml6.com/files/maven"
+    }
+    maven {
+        name = "CurseForge"
+        url = "https://minecraft.curseforge.com/api/maven/"
+    }
+}
+
+dependencies {
+    deobfCompile "mezz.jei:jei_1.12.2:4.8.5.147:api"
+    runtime "mezz.jei:jei_1.12.2:4.8.5.147"
+    deobfCompile "sanlib:SanLib:1.12.2:1.5.0"
+    deobfCompile "the-one-probe:theoneprobe:1.12:1.4.19"
+    deobfCompile "hwyla:Hwyla:1.8.23:B38_1.12"
+    deobfCompile "wawla-what-are-we-looking-at:Wawla:1.12.2:2.5.251"
+}
+
+processResources {
+    inputs.property "version", project.version
+    inputs.property "mcversion", project.minecraft.version
+
+    from(sourceSets.main.resources.srcDirs) {
+        include 'mcmod.info'
+        
+        expand 'version':project.version, 'mcversion':project.minecraft.version
+    }
+
+    from(sourceSets.main.resources.srcDirs) {
+        exclude 'mcmod.info'
+    }
+
+    rename '(.+_at.cfg)', 'META-INF/$1'
+}
+
+jar {
+    manifest {
+        attributes 'FMLAT': 'claysoldiers_at.cfg'
+    }
+}
+
+sourceJar {
+    from sourceSets.main.java
+    appendix = 'src'
+    archiveName = "${baseName}-${version}-${appendix}.jar"
+}
+
+task deobfJar(type: Jar) {
+    from sourceSets.main.output
+    appendix = 'deobf'
+    archiveName = "${baseName}-${version}-${appendix}.jar"
+    manifest {
+        attributes 'FMLAT': 'claysoldiers_at.cfg'
+    }
+}
+
+artifacts {
+    archives deobfJar
+    archives sourceJar
+    archives jar
+}
