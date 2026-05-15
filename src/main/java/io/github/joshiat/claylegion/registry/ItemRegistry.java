@@ -10,16 +10,17 @@ import net.minecraft.world.item.Item;
 
 public final class ItemRegistry {
 
-    public static final SoldierDollItem SOLDIER_DOLL = new SoldierDollItem(
-        new Item.Properties().stacksTo(64)
-    );
-
-    public static void init() {
-    ResourceKey<Item> key = ResourceKey.create(
+    private static final ResourceKey<Item> SOLDIER_DOLL_KEY = ResourceKey.create(
         Registries.ITEM,
         Identifier.fromNamespaceAndPath("clay-legion", "soldier_doll")
     );
-    Registry.register(BuiltInRegistries.ITEM, key, SOLDIER_DOLL);
+
+    public static final SoldierDollItem SOLDIER_DOLL = new SoldierDollItem(
+        new Item.Properties().stacksTo(64).setId(SOLDIER_DOLL_KEY)
+    );
+
+    public static void init() {
+        Registry.register(BuiltInRegistries.ITEM, SOLDIER_DOLL_KEY, SOLDIER_DOLL);
     }
 
     private ItemRegistry() {}
