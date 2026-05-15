@@ -38,3 +38,8 @@ hs_err_*.log
 replay_*.log
 *.hprof
 *.jfr
+
+# local api indexing artifacts
+
+API Documents/fabric-api/
+API Documents/index/

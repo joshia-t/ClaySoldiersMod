@@ -12,3 +12,18 @@ Expected behavior:
 - Summarize the active priorities from these files before writing code.
 - If a request conflicts with these files, call out the conflict and ask for direction.
 - Keep implementation choices aligned with performance goals for large-scale soldier battles.
+
+## Fabric API Retrieval-First Rule
+
+Before generating or modifying Fabric API calls, query the local Fabric API index first.
+
+Index tool:
+- `python tools/api_index/fabric_api_index.py query --version 0.149.0+26.1.2 --q "<query>"`
+
+If MCP server is configured, prefer calling tool `query_fabric_api` instead of shelling out.
+
+Expected behavior:
+- Retrieve likely classes and members from the local index before proposing code.
+- Prefer symbols returned by the local index over memory/guessing.
+- If no strong match appears, state uncertainty and run a narrower follow-up query.
+- Keep injected API context compact (top matches only) to preserve token budget.
