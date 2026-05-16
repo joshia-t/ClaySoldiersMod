@@ -167,6 +167,23 @@ Target parity:
 - [ ] Projectile and special effect rendering
 - [ ] Particle effects and HUD/stat style overlays where applicable
 
+### 8.1 Rendering Conventions and Parity Guardrails
+
+For modern MC 26.1.2 rendering code, preserve these implementation invariants:
+
+- [ ] When using base EntityRenderer submit pipeline (non-LivingEntityRenderer), treat model Y as positive-up; do not assume LivingEntity flip conventions are applied
+- [ ] Keep model box dimensions and texture UV paint dimensions synchronized (for example, a 2x5x2 leg must use h=5 in generated texture regions)
+- [ ] Keep team-color tint readable by preserving per-face brightness contrast in texture generation
+- [ ] Validate soldier silhouette orientation in-game with an asymmetric visual cue before finalizing model pivots/poses
+
+Current status (completed in this migration pass):
+
+- [x] Clay soldier base renderer verified to use positive-Y-up model authoring in EntityRenderer submit pipeline
+- [x] Clay soldier model box dimensions and generated texture UV paint dimensions synchronized (legs fixed from 3-high paint to 5-high paint)
+- [x] Clay soldier orientation validated in-game with asymmetric arm pose cue, then restored to neutral pivoting
+- [x] Clay soldier depth/occlusion path corrected via proper model RenderType and submitModel argument ordering
+- [x] Clay soldier shadow grounding preserved by using submit-pose Y translation tuning instead of render offset overrides
+
 Evidence:
 - OLD/src/main/java/de/sanandrew/mods/claysoldiers/client
 - OLD/src/main/resources/assets/claysoldiers/lang/en_US.lang

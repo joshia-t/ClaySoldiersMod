@@ -21,6 +21,8 @@ import net.minecraft.world.level.Level;
  */
 public class SoldierDollItem extends Item {
 
+    private static final String TEAM_TAG = "team";
+
     public SoldierDollItem(Properties properties) {
         super(properties);
     }
@@ -39,22 +41,16 @@ public class SoldierDollItem extends Item {
 
         // Read team from custom_data: /give @s clay-legion:soldier_doll[minecraft:custom_data={team:5}]
         ItemStack stack = context.getItemInHand();
-        int teamId = 0;
-        CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
-        if (customData != null) {
-            CompoundTag tag = customData.copyTag();
-            if (tag.contains("team")) {
-                teamId = tag.getInt("team").orElse(0);
-            }
-        }
+        int teamId = getTeamIdFromStack(stack);
         soldier.setTeamId(teamId);
+        soldier.setBrickSoldier(stack.getItem() == io.github.joshiat.claylegion.registry.ItemRegistry.BRICK_SOLDIER_DOLL);
 
         soldier.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
         soldier.setYRot(level.getRandom().nextFloat() * 360f);
         soldier.setXRot(0f);
 
         level.addFreshEntity(soldier);
-    Player player = context.getPlayer();
+        Player player = context.getPlayer();
         if (player != null && !player.isCreative()) {
             stack.shrink(1);
         }
@@ -64,6 +60,24 @@ public class SoldierDollItem extends Item {
 
     /** Convenience factory — Phase 4 will encode team via DataComponent. */
     public static ItemStack forTeam(int teamId) {
-        return new ItemStack(io.github.joshiat.claylegion.registry.ItemRegistry.SOLDIER_DOLL);
+        ItemStack stack = new ItemStack(io.github.joshiat.claylegion.registry.ItemRegistry.SOLDIER_DOLL);
+        setTeamIdOnStack(stack, teamId);
+        return stack;
+    }
+
+    public static int getTeamIdFromStack(ItemStack stack) {
+        CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+        if (customData == null) {
+            return 0;
+        }
+
+        CompoundTag tag = customData.copyTag();
+        return tag.contains(TEAM_TAG) ? tag.getInt(TEAM_TAG).orElse(0) : 0;
+    }
+
+    public static void setTeamIdOnStack(ItemStack stack, int teamId) {
+        CompoundTag tag = new CompoundTag();
+        tag.putInt(TEAM_TAG, teamId);
+        stack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
     }
 }

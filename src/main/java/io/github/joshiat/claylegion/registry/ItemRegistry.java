@@ -15,12 +15,22 @@ public final class ItemRegistry {
         Identifier.fromNamespaceAndPath("clay-legion", "soldier_doll")
     );
 
+    private static final ResourceKey<Item> BRICK_SOLDIER_DOLL_KEY = ResourceKey.create(
+        Registries.ITEM,
+        Identifier.fromNamespaceAndPath("clay-legion", "brick_soldier_doll")
+    );
+
     public static final SoldierDollItem SOLDIER_DOLL = new SoldierDollItem(
         new Item.Properties().stacksTo(64).setId(SOLDIER_DOLL_KEY)
     );
 
+    public static final SoldierDollItem BRICK_SOLDIER_DOLL = new SoldierDollItem(
+        new Item.Properties().stacksTo(64).setId(BRICK_SOLDIER_DOLL_KEY)
+    );
+
     public static void init() {
         Registry.register(BuiltInRegistries.ITEM, SOLDIER_DOLL_KEY, SOLDIER_DOLL);
+        Registry.register(BuiltInRegistries.ITEM, BRICK_SOLDIER_DOLL_KEY, BRICK_SOLDIER_DOLL);
     }
 
     private ItemRegistry() {}

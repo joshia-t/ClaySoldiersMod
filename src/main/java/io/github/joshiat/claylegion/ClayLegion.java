@@ -1,6 +1,9 @@
 package io.github.joshiat.claylegion;
 
 import com.mojang.brigadier.arguments.FloatArgumentType;
+import com.mojang.brigadier.arguments.BoolArgumentType;
+import io.github.joshiat.claylegion.config.ClayLegionConfig;
+import io.github.joshiat.claylegion.entity.CombatTuning;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
 import io.github.joshiat.claylegion.registry.ItemRegistry;
 import io.github.joshiat.claylegion.render.RenderTuning;
@@ -25,6 +28,7 @@ public class ClayLegion implements ModInitializer {
 	public void onInitialize() {
 		EntityRegistry.init();
 		ItemRegistry.init();
+		ClayLegionConfig.loadAndApply(LOGGER);
 		registerCommands();
 		LOGGER.info("Clay Legion initialized.");
 	}
@@ -54,11 +58,82 @@ public class ClayLegion implements ModInitializer {
 					}))
 			)
 		);
+
+		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+			dispatcher.register(literal("claylegion")
+				.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
+				.then(literal("config")
+					.then(literal("show")
+						.executes(ctx -> sendCurrentConfig(ctx.getSource())))
+					.then(literal("reload")
+						.executes(ctx -> {
+							ClayLegionConfig.loadAndApply(LOGGER);
+							ctx.getSource().sendSuccess(() -> Component.literal("ClayLegion config reloaded from disk."), false);
+							return sendCurrentConfig(ctx.getSource());
+						}))
+					.then(literal("save")
+						.executes(ctx -> {
+							ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+							ctx.getSource().sendSuccess(() -> Component.literal("ClayLegion config saved to " + ClayLegionConfig.getConfigPath()), false);
+							return 1;
+						}))
+					.then(literal("set")
+						.then(literal("playerDamageMultiplier")
+							.then(argument("value", FloatArgumentType.floatArg(0.0f, 10.0f))
+								.executes(ctx -> {
+									CombatTuning.setPlayerDamageMultiplier(FloatArgumentType.getFloat(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
+						.then(literal("maxObstacleClimbHeight")
+							.then(argument("value", FloatArgumentType.floatArg(0.0f, 3.0f))
+								.executes(ctx -> {
+									CombatTuning.setMaxObstacleClimbHeight(FloatArgumentType.getFloat(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
+						.then(literal("jumpAssistVelocity")
+							.then(argument("value", FloatArgumentType.floatArg(0.2f, 0.8f))
+								.executes(ctx -> {
+									CombatTuning.setJumpAssistVelocity(FloatArgumentType.getFloat(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
+						.then(literal("idleHorizontalBrake")
+							.then(argument("value", FloatArgumentType.floatArg(0.1f, 0.98f))
+								.executes(ctx -> {
+									CombatTuning.setIdleHorizontalBrake(FloatArgumentType.getFloat(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
+						.then(literal("soldierCollisionEnabled")
+							.then(argument("value", BoolArgumentType.bool())
+								.executes(ctx -> {
+									CombatTuning.setSoldierCollisionEnabled(BoolArgumentType.getBool(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
+					)
+				)
+			)
+		);
 	}
 
 	private static int sendCurrentTuning(CommandSourceStack source) {
 		source.sendSuccess(() -> Component.literal(
 			"Clay render tuning: scale=" + RenderTuning.getScale() + ", yoffset=" + RenderTuning.getYOffset()
+		), false);
+		return 1;
+	}
+
+	private static int sendCurrentConfig(CommandSourceStack source) {
+		source.sendSuccess(() -> Component.literal("ClayLegion config: " + ClayLegionConfig.getConfigPath()), false);
+		source.sendSuccess(() -> Component.literal(
+			"combat.maxObstacleClimbHeight=" + CombatTuning.getMaxObstacleClimbHeight()
+				+ ", combat.jumpAssistVelocity=" + CombatTuning.getJumpAssistVelocity()
+				+ ", combat.idleHorizontalBrake=" + CombatTuning.getIdleHorizontalBrake()
+				+ ", combat.playerDamageMultiplier=" + CombatTuning.getPlayerDamageMultiplier()
+				+ ", combat.soldierCollisionEnabled=" + CombatTuning.isSoldierCollisionEnabled()
 		), false);
 		return 1;
 	}
