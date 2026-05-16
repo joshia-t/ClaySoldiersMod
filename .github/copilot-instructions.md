@@ -27,3 +27,17 @@ Expected behavior:
 - Prefer symbols returned by the local index over memory/guessing.
 - If no strong match appears, state uncertainty and run a narrower follow-up query.
 - Keep injected API context compact (top matches only) to preserve token budget.
+
+## Fabric Tutorial Retrieval-First Rule
+
+Before answering Fabric "how do I..." implementation questions, query the local tutorial index first.
+
+Tutorial index tool:
+- `python tools/api_index/fabric_docs_tutorial_index.py query --q "<query>"`
+
+If MCP server is configured, prefer calling tool `query_fabric_tutorials` or `query_fabric_tutorials_compact`.
+
+Expected behavior:
+- Retrieve the most relevant tutorial pages/snippets before proposing step-by-step guidance.
+- Prefer guidance that is anchored in retrieved docs pages rather than memory.
+- Keep injected tutorial context compact and task-focused.

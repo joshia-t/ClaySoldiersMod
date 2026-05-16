@@ -4,8 +4,11 @@ import net.minecraft.client.renderer.entity.state.EntityRenderState;
 
 /**
  * Per-frame render state for ClaySoldierEntity.
- * Phase 5 will add animation state fields (e.g. walkAnimationPos, walkAnimationSpeed, teamColorTint).
  */
 public class ClaySoldierEntityRenderState extends EntityRenderState {
-    // Phase 5: add animation and team-colour fields here
+    /**
+     * Packed ARGB from SoldierTeam.dyeColor().
+     * Default 0xFFFFFFFF = white = no tint (fallback if team lookup fails).
+     */
+    public int teamColor = 0xFFFFFFFF;
 }

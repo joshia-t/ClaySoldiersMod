@@ -40,11 +40,25 @@ Query as JSON:
 python tools/api_index/fabric_api_index.py query --version 0.149.0+26.1.2 --q "ServerPlayNetworking registerReceiver" --json
 ```
 
+Sync Fabric tutorial/how-to docs index:
+
+```powershell
+python tools/api_index/fabric_docs_tutorial_index.py sync --seed-url https://docs.fabricmc.net/develop/getting-started/creating-a-project --include-prefix /develop/ --max-pages 250 --max-depth 5 --recreate
+```
+
+Query tutorial/how-to hits:
+
+```powershell
+python tools/api_index/fabric_docs_tutorial_index.py query --q "create a project gradle setup" --limit 8 --json
+```
+
 ## Storage Layout
 
 - `API Documents/fabric-api/<version>/raw/`: downloaded Javadoc search-index JS files.
 - `API Documents/fabric-api/<version>/pages/`: optional mirrored class pages.
+- `API Documents/fabric-docs/tutorials/`: tutorial index snapshots.
 - `API Documents/index/fabric_api_<version>.sqlite`: local retrieval database.
+- `API Documents/index/fabric_tutorials.sqlite`: local tutorial/how-to retrieval database.
 
 ## Integrating with Copilot Chat
 

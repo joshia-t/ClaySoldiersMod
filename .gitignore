@@ -42,4 +42,5 @@ replay_*.log
 # local api indexing artifacts
 
 API Documents/fabric-api/
+API Documents/fabric-docs/
 API Documents/index/

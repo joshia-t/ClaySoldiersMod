@@ -18,7 +18,7 @@ public final class EntityRegistry {
 
     public static final EntityType<ClaySoldierEntity> CLAY_SOLDIER = EntityType.Builder
         .<ClaySoldierEntity>of(ClaySoldierEntity::new, MobCategory.CREATURE)
-        .sized(0.4f, 0.4f)
+        .sized(0.24f, 0.4f)
         .build(CLAY_SOLDIER_KEY);
 
     public static void init() {
