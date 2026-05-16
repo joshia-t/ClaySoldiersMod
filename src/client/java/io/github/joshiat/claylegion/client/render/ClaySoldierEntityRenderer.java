@@ -10,7 +10,6 @@ import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.resources.Identifier;
-import net.minecraft.world.phys.Vec3;
 
 /**
  * Renders a ClaySoldierEntity.
@@ -38,11 +37,6 @@ public class ClaySoldierEntityRenderer
     }
 
     @Override
-    public Vec3 getRenderOffset(ClaySoldierEntityRenderState state) {
-        return new Vec3(0.0, RenderTuning.getYOffset(), 0.0);
-    }
-
-    @Override
     public ClaySoldierEntityRenderState createRenderState() {
         return new ClaySoldierEntityRenderState();
     }
@@ -61,6 +55,7 @@ public class ClaySoldierEntityRenderer
         super.submit(state, poseStack, collector, cameraRenderState);
 
         poseStack.pushPose();
+        poseStack.translate(0.0f, RenderTuning.getYOffset(), 0.0f);
         float scale = RenderTuning.getScale();
         poseStack.scale(scale, scale, scale);
 

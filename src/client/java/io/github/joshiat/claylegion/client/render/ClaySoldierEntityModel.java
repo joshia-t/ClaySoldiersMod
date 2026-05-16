@@ -24,7 +24,7 @@ public class ClaySoldierEntityModel extends EntityModel<ClaySoldierEntityRenderS
         private final ModelPart leftLeg;
 
     public ClaySoldierEntityModel(ModelPart root) {
-                super(root, RenderTypes::entityCutoutCull);
+                super(root, RenderTypes::entityCutout);
         this.head     = root.getChild(PartNames.HEAD);
         this.body     = root.getChild(PartNames.BODY);
         this.rightArm = root.getChild(PartNames.RIGHT_ARM);
@@ -37,45 +37,53 @@ public class ClaySoldierEntityModel extends EntityModel<ClaySoldierEntityRenderS
         MeshDefinition mesh = new MeshDefinition();
         PartDefinition root = mesh.getRoot();
 
-        // Feet-at-origin baseline (y=0 at ground contact) for predictable tuning.
-        // Head: old clayman feel (3x3x3), y -12..-9
+        // Positive-Y-up convention: EntityRenderer does NOT apply the LivingEntity
+        // MODEL_Y_OFFSET flip, so y=0 is feet/ground and positive Y goes upward.
+        //
+        //  y  0.. 5  legs
+        //  y  5.. 9  body
+        //  y  5..10  arms (alongside body, splayed outward in PartPose for orientation test)
+        //  y  9..12  head
+
+        // Head: 3x3x3
         root.addOrReplaceChild(
                 PartNames.HEAD,
                 CubeListBuilder.create().texOffs(0, 0)
-                        .addBox(-1.5f, -12f, -1.5f, 3, 3, 3),
+                        .addBox(-1.5f, 9f, -1.5f, 3, 3, 3),
                 PartPose.ZERO);
 
-        // Body: 4x4x2, y -9..-5
+        // Body: 4x4x2
         root.addOrReplaceChild(
                 PartNames.BODY,
                 CubeListBuilder.create().texOffs(0, 8)
-                        .addBox(-2f, -9f, -1f, 4, 4, 2),
+                        .addBox(-2f, 5f, -1f, 4, 4, 2),
                 PartPose.ZERO);
 
-        // Arms: 2x6x2, y -8..-2
+        // Arms: 2x5x2 — pivot at shoulder (y=9), box hangs down (local y=-5..0)
+        // zRot splays arms outward from shoulder for orientation testing
         root.addOrReplaceChild(
                 PartNames.RIGHT_ARM,
                 CubeListBuilder.create().texOffs(0, 16)
-                        .addBox(-4f, -8f, -1f, 2, 6, 2),
-                PartPose.ZERO);
+                        .addBox(-4f, 4f, -1f, 2, 5, 2),
+                PartPose.offsetAndRotation(0f, 0f, 0f, 0f, 0f, 0f));
 
         root.addOrReplaceChild(
                 PartNames.LEFT_ARM,
                 CubeListBuilder.create().texOffs(8, 16)
-                        .addBox(2f, -8f, -1f, 2, 6, 2),
-                PartPose.ZERO);
+                        .addBox(2f, 4f, -1f, 2, 5, 2),
+                PartPose.offsetAndRotation(0f, 0f, 0f, 0f, 0f, 0f));
 
-        // Legs: 2x5x2, y -5..0
+        // Legs: 2x5x2
         root.addOrReplaceChild(
                 PartNames.RIGHT_LEG,
                 CubeListBuilder.create().texOffs(16, 16)
-                        .addBox(-2f, -5f, -1f, 2, 5, 2),
+                        .addBox(-2f, 0f, -1f, 2, 5, 2),
                 PartPose.ZERO);
 
         root.addOrReplaceChild(
                 PartNames.LEFT_LEG,
                 CubeListBuilder.create().texOffs(24, 16)
-                        .addBox(0f, -5f, -1f, 2, 5, 2),
+                        .addBox(0f, 0f, -1f, 2, 5, 2),
                 PartPose.ZERO);
 
         return LayerDefinition.create(mesh, 32, 32);
