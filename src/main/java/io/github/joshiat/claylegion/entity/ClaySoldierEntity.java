@@ -20,6 +20,7 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
+import net.minecraft.util.Mth;
 
 import java.util.List;
 
@@ -41,6 +42,10 @@ public class ClaySoldierEntity extends Entity {
         SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.BYTE);
     private static final EntityDataAccessor<Byte> AI_STATE =
             SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.BYTE);
+    private static final EntityDataAccessor<Byte> HURT_FLASH_TICKS =
+            SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.BYTE);
+        private static final EntityDataAccessor<Byte> ATTACK_SWING_TICKS =
+            SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.BYTE);
 
     public static final float MAX_HEALTH = 4.0f;
     private static final float ATTACK_DAMAGE = 1.0f;
@@ -55,10 +60,14 @@ public class ClaySoldierEntity extends Entity {
     private static final double ATTACK_RANGE = 0.8;
     private static final double ATTACK_RANGE_SQ = ATTACK_RANGE * ATTACK_RANGE;
     private static final int ATTACK_COOLDOWN_TICKS = 10;
+    private static final int ATTACK_SWING_DURATION = 7;
+    private static final int HURT_FLASH_DURATION = 8;
 
     private static final double CHASE_ACCEL = 0.06;
     private static final double MAX_CHASE_SPEED = 0.18;
     private static final int JUMP_ASSIST_COOLDOWN_TICKS = 6;
+    private static final int SEPARATION_UPDATE_INTERVAL = 4;
+    private static final float CLIENT_INTERPOLATION_DELAY_TICKS = 1.0f;
 
     private static final byte FLAG_BRICK = 0x02;
 
@@ -69,6 +78,17 @@ public class ClaySoldierEntity extends Entity {
     private int jumpAssistCooldown;
     private double obstructionBaseY;
     private int obstructionTicks;
+    private Vec3 cachedSeparation = Vec3.ZERO;
+
+    // Client interpolation buffer: previous and current server-truth snapshots.
+    private boolean clientHasCorrectionTarget;
+    private double clientPrevX, clientPrevY, clientPrevZ;
+    private double clientCurrX, clientCurrY, clientCurrZ;
+    private float clientPrevYaw, clientPrevPitch;
+    private float clientCurrYaw, clientCurrPitch;
+    private int clientPrevSnapshotTick;
+    private int clientCurrSnapshotTick;
+    private int clientInterpolationTick;
 
     public ClaySoldierEntity(EntityType<? extends ClaySoldierEntity> type, Level level) {
         super(type, level);
@@ -80,6 +100,8 @@ public class ClaySoldierEntity extends Entity {
         builder.define(HEALTH, MAX_HEALTH);
         builder.define(ENTITY_FLAGS, (byte) 0);
         builder.define(AI_STATE, (byte) SoldierAiState.IDLE.id);
+        builder.define(HURT_FLASH_TICKS, (byte) 0);
+        builder.define(ATTACK_SWING_TICKS, (byte) 0);
     }
 
     public int getTeamId() {
@@ -118,9 +140,86 @@ public class ClaySoldierEntity extends Entity {
 
         float newHealth = getSoldierHealth() - amount;
         setSoldierHealth(newHealth);
+        setHurtFlashTicks(HURT_FLASH_DURATION);
         if (newHealth <= 0f && level() instanceof ServerLevel serverLevel) {
             onSoldierKilled(serverLevel);
         }
+    }
+
+    public int getHurtFlashTicks() {
+        return entityData.get(HURT_FLASH_TICKS);
+    }
+
+    private void setHurtFlashTicks(int ticks) {
+        entityData.set(HURT_FLASH_TICKS, (byte) Math.max(0, Math.min(127, ticks)));
+    }
+
+    public int getAttackSwingTicks() {
+        return entityData.get(ATTACK_SWING_TICKS);
+    }
+
+    private void setAttackSwingTicks(int ticks) {
+        entityData.set(ATTACK_SWING_TICKS, (byte) Math.max(0, Math.min(127, ticks)));
+    }
+
+    public float getAttackSwingProgress(float partialTick) {
+        float remaining = Math.max(0.0f, getAttackSwingTicks() - partialTick);
+        return Mth.clamp((ATTACK_SWING_DURATION - remaining) / ATTACK_SWING_DURATION, 0.0f, 1.0f);
+    }
+
+    /**
+     * Returns a client-only partial-tick yaw sampled from the active correction arc.
+     *
+     * The server remains authoritative; this is only for smoother rendering between
+     * correction ticks so turn updates match the position interpolation quality.
+     */
+    public float getRenderYaw(float partialTick) {
+        if (!level().isClientSide() || !clientHasCorrectionTarget) {
+            return getYRot();
+        }
+
+        return sampleClientYaw(getClientSampleTime(partialTick));
+    }
+
+    /**
+     * Returns the client-only interpolated render position for partial-tick smoothing.
+     */
+    public Vec3 getRenderPosition(float partialTick) {
+        if (!level().isClientSide() || !clientHasCorrectionTarget) {
+            return position();
+        }
+
+        return sampleClientPosition(getClientSampleTime(partialTick));
+    }
+
+    private float getClientSampleTime(float partialTick) {
+        return clientInterpolationTick + Mth.clamp(partialTick, 0.0f, 1.0f) - CLIENT_INTERPOLATION_DELAY_TICKS;
+    }
+
+    private float getClientSampleLerp(float sampleTime) {
+        int span = Math.max(1, clientCurrSnapshotTick - clientPrevSnapshotTick);
+        float t = (sampleTime - clientPrevSnapshotTick) / (float) span;
+        return Mth.clamp(t, 0.0f, 1.0f);
+    }
+
+    private Vec3 sampleClientPosition(float sampleTime) {
+        float t = getClientSampleLerp(sampleTime);
+        return new Vec3(
+            Mth.lerp(t, clientPrevX, clientCurrX),
+            Mth.lerp(t, clientPrevY, clientCurrY),
+            Mth.lerp(t, clientPrevZ, clientCurrZ)
+        );
+    }
+
+    private float sampleClientYaw(float sampleTime) {
+        float t = getClientSampleLerp(sampleTime);
+        float yawDelta = Mth.wrapDegrees(clientCurrYaw - clientPrevYaw);
+        return clientPrevYaw + yawDelta * t;
+    }
+
+    private float sampleClientPitch(float sampleTime) {
+        float t = getClientSampleLerp(sampleTime);
+        return Mth.lerp(t, clientPrevPitch, clientCurrPitch);
     }
 
     private byte getFlags() {
@@ -175,6 +274,14 @@ public class ClaySoldierEntity extends Entity {
     public void tick() {
         super.tick();
 
+        if (level().isClientSide()) {
+            // Client is presentation-only: follow server correction arcs and avoid
+            // running parallel local physics that causes snap-back stutter.
+            clientInterpolationTick++;
+            applyClientLinearCorrection();
+            return;
+        }
+
         if (!onGround()) {
             setDeltaMovement(getDeltaMovement().add(0.0, -GRAVITY, 0.0));
         }
@@ -182,9 +289,61 @@ public class ClaySoldierEntity extends Entity {
         setDeltaMovement(getDeltaMovement().multiply(DRAG, 1.0, DRAG));
         move(MoverType.SELF, getDeltaMovement());
 
+        serverCombatTick();
+    }
+
+    @Override
+    protected void lerpPositionAndRotationStep(int steps, double x, double y, double z, double yRot, double xRot) {
         if (!level().isClientSide()) {
-            serverCombatTick();
+            super.lerpPositionAndRotationStep(steps, x, y, z, yRot, xRot);
+            return;
         }
+
+        int arrivalTick = clientInterpolationTick;
+        if (!clientHasCorrectionTarget) {
+            clientHasCorrectionTarget = true;
+            clientPrevX = x;
+            clientPrevY = y;
+            clientPrevZ = z;
+            clientCurrX = x;
+            clientCurrY = y;
+            clientCurrZ = z;
+            clientPrevYaw = (float) yRot;
+            clientPrevPitch = (float) xRot;
+            clientCurrYaw = (float) yRot;
+            clientCurrPitch = (float) xRot;
+            clientPrevSnapshotTick = Math.max(0, arrivalTick - 1);
+            clientCurrSnapshotTick = Math.max(clientPrevSnapshotTick + 1, arrivalTick);
+            return;
+        }
+
+        clientPrevX = clientCurrX;
+        clientPrevY = clientCurrY;
+        clientPrevZ = clientCurrZ;
+        clientPrevYaw = clientCurrYaw;
+        clientPrevPitch = clientCurrPitch;
+        clientPrevSnapshotTick = clientCurrSnapshotTick;
+
+        clientCurrX = x;
+        clientCurrY = y;
+        clientCurrZ = z;
+        clientCurrYaw = (float) yRot;
+        clientCurrPitch = (float) xRot;
+        clientCurrSnapshotTick = Math.max(clientPrevSnapshotTick + 1, arrivalTick);
+    }
+
+    private void applyClientLinearCorrection() {
+        if (!clientHasCorrectionTarget) {
+            return;
+        }
+
+        float sampleTime = getClientSampleTime(0.0f);
+        Vec3 sampledPos = sampleClientPosition(sampleTime);
+        setPos(sampledPos);
+        setYRot(sampleClientYaw(sampleTime));
+        setXRot(sampleClientPitch(sampleTime));
+        setYHeadRot(getYRot());
+        setYBodyRot(getYRot());
     }
 
     private void serverCombatTick() {
@@ -197,6 +356,16 @@ public class ClaySoldierEntity extends Entity {
         }
         if (jumpAssistCooldown > 0) {
             jumpAssistCooldown--;
+        }
+        if (getHurtFlashTicks() > 0) {
+            setHurtFlashTicks(getHurtFlashTicks() - 1);
+        }
+        if (getAttackSwingTicks() > 0) {
+            setAttackSwingTicks(getAttackSwingTicks() - 1);
+        }
+
+        if (((level().getGameTime() + getId()) % SEPARATION_UPDATE_INTERVAL) == 0) {
+            cachedSeparation = sampleSeparationForce();
         }
 
         updateTargetCache();
@@ -217,6 +386,7 @@ public class ClaySoldierEntity extends Entity {
             faceTarget(cachedTarget);
 
             if (attackCooldown <= 0) {
+                setAttackSwingTicks(ATTACK_SWING_DURATION);
                 cachedTarget.applySoldierDamage(ATTACK_DAMAGE, (byte) getTeamId());
                 attackCooldown = ATTACK_COOLDOWN_TICKS;
             }
@@ -235,7 +405,9 @@ public class ClaySoldierEntity extends Entity {
         }
 
         Vec3 dir = horizontal.scale(1.0 / Math.sqrt(lenSq));
-        Vec3 velocity = getDeltaMovement().add(dir.scale(CHASE_ACCEL));
+        Vec3 velocity = getDeltaMovement()
+            .add(dir.scale(CHASE_ACCEL))
+            .add(cachedSeparation.scale(CombatTuning.getSeparationStrength()));
 
         double horizontalSpeedSq = velocity.x * velocity.x + velocity.z * velocity.z;
         double maxSpeedSq = MAX_CHASE_SPEED * MAX_CHASE_SPEED;
@@ -261,13 +433,14 @@ public class ClaySoldierEntity extends Entity {
 
             // Lightweight obstacle avoidance: strafe around blocked faces to reduce wall-sticking.
             double dirSign = (((level().getGameTime() + getId()) / 10L) & 1L) == 0L ? 1.0 : -1.0;
-            Vec3 strafe = new Vec3(-dir.z * 0.03 * dirSign, 0.0, dir.x * 0.03 * dirSign);
+            Vec3 strafe = new Vec3(-dir.z * CombatTuning.getObstacleStrafeStrength() * dirSign, 0.0,
+                    dir.x * CombatTuning.getObstacleStrafeStrength() * dirSign);
             setDeltaMovement(getDeltaMovement().add(strafe));
         } else if (onGround()) {
             resetObstructionTracking();
         }
 
-        faceTarget(target);
+        faceMovementOrTarget(target);
     }
 
     private void applyIdleBraking() {
@@ -287,6 +460,52 @@ public class ClaySoldierEntity extends Entity {
         obstructionBaseY = getY();
     }
 
+    private Vec3 sampleSeparationForce() {
+        if (!CombatTuning.isSoldierCollisionEnabled()) {
+            return Vec3.ZERO;
+        }
+
+        double radius = CombatTuning.getSeparationRadius();
+        double radiusSq = radius * radius;
+        AABB localBox = getBoundingBox().inflate(radius, 0.6, radius);
+        List<ClaySoldierEntity> neighbors = level().getEntitiesOfClass(
+                ClaySoldierEntity.class,
+                localBox,
+                e -> e != this && e.isAlive() && !e.isRemoved()
+        );
+
+        if (neighbors.isEmpty()) {
+            return Vec3.ZERO;
+        }
+
+        Vec3 accum = Vec3.ZERO;
+        int count = 0;
+        for (ClaySoldierEntity other : neighbors) {
+            Vec3 away = position().subtract(other.position());
+            Vec3 horizontalAway = new Vec3(away.x, 0.0, away.z);
+            double distSq = horizontalAway.lengthSqr();
+            if (distSq < 1.0E-6 || distSq > radiusSq) {
+                continue;
+            }
+
+            // Inverse distance weighting keeps close-body separation strong and far influence weak.
+            accum = accum.add(horizontalAway.scale(1.0 / distSq));
+            count++;
+        }
+
+        if (count == 0) {
+            return Vec3.ZERO;
+        }
+
+        Vec3 avg = accum.scale(1.0 / count);
+        double len = Math.sqrt(avg.x * avg.x + avg.z * avg.z);
+        if (len < 1.0E-6) {
+            return Vec3.ZERO;
+        }
+
+        return new Vec3(avg.x / len, 0.0, avg.z / len);
+    }
+
     private void faceTarget(ClaySoldierEntity target) {
         double dx = target.getX() - getX();
         double dz = target.getZ() - getZ();
@@ -294,6 +513,19 @@ public class ClaySoldierEntity extends Entity {
         setYRot(yaw);
         setYHeadRot(yaw);
         setYBodyRot(yaw);
+    }
+
+    private void faceMovementOrTarget(ClaySoldierEntity fallbackTarget) {
+        Vec3 velocity = getDeltaMovement();
+        double speedSq = velocity.x * velocity.x + velocity.z * velocity.z;
+        if (speedSq > 1.0E-6) {
+            float yaw = (float) (Math.atan2(velocity.z, velocity.x) * (180.0 / Math.PI)) - 90.0f;
+            setYRot(yaw);
+            setYHeadRot(yaw);
+            setYBodyRot(yaw);
+        } else {
+            faceTarget(fallbackTarget);
+        }
     }
 
     private void updateTargetCache() {

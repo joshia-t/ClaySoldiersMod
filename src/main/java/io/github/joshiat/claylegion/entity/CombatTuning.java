@@ -8,6 +8,9 @@ public final class CombatTuning {
 
     private static final float DEFAULT_MAX_OBSTACLE_CLIMB_HEIGHT = 1.25f;
     private static final float DEFAULT_JUMP_ASSIST_VELOCITY = 0.42f;
+    private static final float DEFAULT_SEPARATION_RADIUS = 0.55f;
+    private static final float DEFAULT_SEPARATION_STRENGTH = 0.035f;
+    private static final float DEFAULT_OBSTACLE_STRAFE_STRENGTH = 0.06f;
     private static final float DEFAULT_IDLE_HORIZONTAL_BRAKE = 0.72f;
     private static final float DEFAULT_IDLE_STOP_THRESHOLD_SQ = 0.0009f;
     private static final float DEFAULT_PLAYER_DAMAGE_MULTIPLIER = 1.0f;
@@ -15,6 +18,9 @@ public final class CombatTuning {
 
     private static volatile float maxObstacleClimbHeight = DEFAULT_MAX_OBSTACLE_CLIMB_HEIGHT;
     private static volatile float jumpAssistVelocity = DEFAULT_JUMP_ASSIST_VELOCITY;
+    private static volatile float separationRadius = DEFAULT_SEPARATION_RADIUS;
+    private static volatile float separationStrength = DEFAULT_SEPARATION_STRENGTH;
+    private static volatile float obstacleStrafeStrength = DEFAULT_OBSTACLE_STRAFE_STRENGTH;
     private static volatile float idleHorizontalBrake = DEFAULT_IDLE_HORIZONTAL_BRAKE;
     private static volatile float idleStopThresholdSq = DEFAULT_IDLE_STOP_THRESHOLD_SQ;
     private static volatile float playerDamageMultiplier = DEFAULT_PLAYER_DAMAGE_MULTIPLIER;
@@ -26,6 +32,9 @@ public final class CombatTuning {
     public static void reset() {
         maxObstacleClimbHeight = DEFAULT_MAX_OBSTACLE_CLIMB_HEIGHT;
         jumpAssistVelocity = DEFAULT_JUMP_ASSIST_VELOCITY;
+        separationRadius = DEFAULT_SEPARATION_RADIUS;
+        separationStrength = DEFAULT_SEPARATION_STRENGTH;
+        obstacleStrafeStrength = DEFAULT_OBSTACLE_STRAFE_STRENGTH;
         idleHorizontalBrake = DEFAULT_IDLE_HORIZONTAL_BRAKE;
         idleStopThresholdSq = DEFAULT_IDLE_STOP_THRESHOLD_SQ;
         playerDamageMultiplier = DEFAULT_PLAYER_DAMAGE_MULTIPLIER;
@@ -46,6 +55,30 @@ public final class CombatTuning {
 
     public static void setJumpAssistVelocity(float value) {
         jumpAssistVelocity = clamp(value, 0.2f, 0.8f);
+    }
+
+    public static float getSeparationRadius() {
+        return separationRadius;
+    }
+
+    public static void setSeparationRadius(float value) {
+        separationRadius = clamp(value, 0.2f, 1.5f);
+    }
+
+    public static float getSeparationStrength() {
+        return separationStrength;
+    }
+
+    public static void setSeparationStrength(float value) {
+        separationStrength = clamp(value, 0.0f, 0.2f);
+    }
+
+    public static float getObstacleStrafeStrength() {
+        return obstacleStrafeStrength;
+    }
+
+    public static void setObstacleStrafeStrength(float value) {
+        obstacleStrafeStrength = clamp(value, 0.0f, 0.2f);
     }
 
     public static float getIdleHorizontalBrake() {

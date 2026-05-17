@@ -58,9 +58,7 @@ paint_box(entity_img, u=16, v=16, w=2, h=5, d=2, shade=0.72)
 # LEFT_LEG  (w=2,h=5,d=2) texOffs(24,16)
 paint_box(entity_img, u=24, v=16, w=2, h=5, d=2, shade=0.72)
 
-# Head front eye pixels for orientation readability.
-entity_img.putpixel((4, 4), MARK)
-entity_img.putpixel((5, 4), MARK)
+# Keep head front clean; no debug marker pixels.
 
 out_dir = os.path.join("src", "main", "resources", "assets", "clay-legion", "textures", "entity")
 os.makedirs(out_dir, exist_ok=True)

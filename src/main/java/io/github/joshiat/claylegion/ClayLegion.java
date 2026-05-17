@@ -65,6 +65,13 @@ public class ClayLegion implements ModInitializer {
 				.then(literal("config")
 					.then(literal("show")
 						.executes(ctx -> sendCurrentConfig(ctx.getSource())))
+					.then(literal("reset")
+						.executes(ctx -> {
+							CombatTuning.reset();
+							ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+							ctx.getSource().sendSuccess(() -> Component.literal("ClayLegion config reset to defaults."), false);
+							return sendCurrentConfig(ctx.getSource());
+						}))
 					.then(literal("reload")
 						.executes(ctx -> {
 							ClayLegionConfig.loadAndApply(LOGGER);
@@ -96,6 +103,27 @@ public class ClayLegion implements ModInitializer {
 							.then(argument("value", FloatArgumentType.floatArg(0.2f, 0.8f))
 								.executes(ctx -> {
 									CombatTuning.setJumpAssistVelocity(FloatArgumentType.getFloat(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
+						.then(literal("separationRadius")
+							.then(argument("value", FloatArgumentType.floatArg(0.2f, 1.5f))
+								.executes(ctx -> {
+									CombatTuning.setSeparationRadius(FloatArgumentType.getFloat(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
+						.then(literal("separationStrength")
+							.then(argument("value", FloatArgumentType.floatArg(0.0f, 0.2f))
+								.executes(ctx -> {
+									CombatTuning.setSeparationStrength(FloatArgumentType.getFloat(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
+						.then(literal("obstacleStrafeStrength")
+							.then(argument("value", FloatArgumentType.floatArg(0.0f, 0.2f))
+								.executes(ctx -> {
+									CombatTuning.setObstacleStrafeStrength(FloatArgumentType.getFloat(ctx, "value"));
 									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
 									return sendCurrentConfig(ctx.getSource());
 								})))
@@ -131,6 +159,9 @@ public class ClayLegion implements ModInitializer {
 		source.sendSuccess(() -> Component.literal(
 			"combat.maxObstacleClimbHeight=" + CombatTuning.getMaxObstacleClimbHeight()
 				+ ", combat.jumpAssistVelocity=" + CombatTuning.getJumpAssistVelocity()
+				+ ", combat.separationRadius=" + CombatTuning.getSeparationRadius()
+				+ ", combat.separationStrength=" + CombatTuning.getSeparationStrength()
+				+ ", combat.obstacleStrafeStrength=" + CombatTuning.getObstacleStrafeStrength()
 				+ ", combat.idleHorizontalBrake=" + CombatTuning.getIdleHorizontalBrake()
 				+ ", combat.playerDamageMultiplier=" + CombatTuning.getPlayerDamageMultiplier()
 				+ ", combat.soldierCollisionEnabled=" + CombatTuning.isSoldierCollisionEnabled()

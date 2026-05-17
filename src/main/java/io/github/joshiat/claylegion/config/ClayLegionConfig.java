@@ -46,6 +46,9 @@ public final class ClayLegionConfig {
                 if (combatObj instanceof Map<?, ?> combat) {
                     setIfNumber(combat.get("maxObstacleClimbHeight"), CombatTuning::setMaxObstacleClimbHeight);
                     setIfNumber(combat.get("jumpAssistVelocity"), CombatTuning::setJumpAssistVelocity);
+                    setIfNumber(combat.get("separationRadius"), CombatTuning::setSeparationRadius);
+                    setIfNumber(combat.get("separationStrength"), CombatTuning::setSeparationStrength);
+                    setIfNumber(combat.get("obstacleStrafeStrength"), CombatTuning::setObstacleStrafeStrength);
                     setIfNumber(combat.get("idleHorizontalBrake"), CombatTuning::setIdleHorizontalBrake);
                     setIfNumber(combat.get("playerDamageMultiplier"), CombatTuning::setPlayerDamageMultiplier);
                     setIfBoolean(combat.get("soldierCollisionEnabled"), CombatTuning::setSoldierCollisionEnabled);
@@ -64,12 +67,18 @@ public final class ClayLegionConfig {
                 combat:
                   maxObstacleClimbHeight: %s
                                     jumpAssistVelocity: %s
+                                    separationRadius: %s
+                                    separationStrength: %s
+                                    obstacleStrafeStrength: %s
                   idleHorizontalBrake: %s
                   playerDamageMultiplier: %s
                                     soldierCollisionEnabled: %s
                 """.formatted(
                 trimFloat(CombatTuning.getMaxObstacleClimbHeight()),
                                 trimFloat(CombatTuning.getJumpAssistVelocity()),
+                                trimFloat(CombatTuning.getSeparationRadius()),
+                                trimFloat(CombatTuning.getSeparationStrength()),
+                                trimFloat(CombatTuning.getObstacleStrafeStrength()),
                 trimFloat(CombatTuning.getIdleHorizontalBrake()),
                                 trimFloat(CombatTuning.getPlayerDamageMultiplier()),
                                 Boolean.toString(CombatTuning.isSoldierCollisionEnabled())

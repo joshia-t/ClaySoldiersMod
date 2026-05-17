@@ -3,6 +3,7 @@ package io.github.joshiat.claylegion.client.render;
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
 import io.github.joshiat.claylegion.render.RenderTuning;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
@@ -10,6 +11,7 @@ import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Renders a ClaySoldierEntity.
@@ -47,6 +49,19 @@ public class ClaySoldierEntityRenderer
                                    float partialTick) {
         super.extractRenderState(entity, state, partialTick);
         state.teamColor = entity.getSoldierTeam().dyeColor();
+
+        Vec3 velocity = entity.getDeltaMovement();
+        state.horizontalSpeed = (float) Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+        state.animTime = entity.tickCount + partialTick;
+        state.attackSwingProgress = entity.getAttackSwingProgress(partialTick);
+        state.hurtFlashTicks = entity.getHurtFlashTicks();
+        state.renderYaw = entity.getRenderYaw(partialTick);
+
+        Vec3 renderPos = entity.getRenderPosition(partialTick);
+        Vec3 currentPos = entity.position();
+        state.renderOffsetX = (float) (renderPos.x - currentPos.x);
+        state.renderOffsetY = (float) (renderPos.y - currentPos.y);
+        state.renderOffsetZ = (float) (renderPos.z - currentPos.z);
     }
 
     @Override
@@ -55,7 +70,9 @@ public class ClaySoldierEntityRenderer
         super.submit(state, poseStack, collector, cameraRenderState);
 
         poseStack.pushPose();
+        poseStack.translate(state.renderOffsetX, state.renderOffsetY, state.renderOffsetZ);
         poseStack.translate(0.0f, RenderTuning.getYOffset(), 0.0f);
+        poseStack.mulPose(Axis.YP.rotationDegrees(-state.renderYaw));
         float scale = RenderTuning.getScale();
         poseStack.scale(scale, scale, scale);
 
@@ -63,9 +80,13 @@ public class ClaySoldierEntityRenderer
         model.setArmVisibility(state.distanceToCameraSq < LOD_FINE_SQ);
         model.setupAnim(state);
         RenderType renderType = model.renderType(TEXTURE);
+        int overlay = state.hurtFlashTicks > 0
+                ? OverlayTexture.pack(OverlayTexture.u(0.0f), OverlayTexture.v(true))
+                : OverlayTexture.NO_OVERLAY;
+
         // Match vanilla submit order: light, overlay, modelTint, sprite, outlineColor, crumbling.
         collector.submitModel(model, state, poseStack, renderType,
-            state.lightCoords, OverlayTexture.NO_OVERLAY, state.teamColor, null, state.outlineColor, null);
+            state.lightCoords, overlay, state.teamColor, null, state.outlineColor, null);
         poseStack.popPose();
     }
 }

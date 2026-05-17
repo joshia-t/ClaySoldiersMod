@@ -9,6 +9,7 @@ import net.minecraft.client.model.geom.builders.LayerDefinition;
 import net.minecraft.client.model.geom.builders.MeshDefinition;
 import net.minecraft.client.model.geom.builders.PartDefinition;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.util.Mth;
 
 /**
  * Legacy-inspired clay soldier silhouette (head/body/arms/legs)
@@ -59,32 +60,31 @@ public class ClaySoldierEntityModel extends EntityModel<ClaySoldierEntityRenderS
                         .addBox(-2f, 5f, -1f, 4, 4, 2),
                 PartPose.ZERO);
 
-        // Arms: 2x5x2 — pivot at shoulder (y=9), box hangs down (local y=-5..0)
-        // zRot splays arms outward from shoulder for orientation testing
+        // Arms: pivot at shoulder (y=9), local cube hangs downward from pivot.
         root.addOrReplaceChild(
                 PartNames.RIGHT_ARM,
                 CubeListBuilder.create().texOffs(0, 16)
-                        .addBox(-4f, 4f, -1f, 2, 5, 2),
-                PartPose.offsetAndRotation(0f, 0f, 0f, 0f, 0f, 0f));
+                        .addBox(-2f, -5f, -1f, 2, 5, 2),
+                PartPose.offset(-2f, 9f, 0f));
 
         root.addOrReplaceChild(
                 PartNames.LEFT_ARM,
                 CubeListBuilder.create().texOffs(8, 16)
-                        .addBox(2f, 4f, -1f, 2, 5, 2),
-                PartPose.offsetAndRotation(0f, 0f, 0f, 0f, 0f, 0f));
+                        .addBox(0f, -5f, -1f, 2, 5, 2),
+                PartPose.offset(2f, 9f, 0f));
 
-        // Legs: 2x5x2
+        // Legs: pivot at hip (y=5), local cube hangs downward from pivot.
         root.addOrReplaceChild(
                 PartNames.RIGHT_LEG,
                 CubeListBuilder.create().texOffs(16, 16)
-                        .addBox(-2f, 0f, -1f, 2, 5, 2),
-                PartPose.ZERO);
+                        .addBox(-1f, -5f, -1f, 2, 5, 2),
+                PartPose.offset(-1f, 5f, 0f));
 
         root.addOrReplaceChild(
                 PartNames.LEFT_LEG,
                 CubeListBuilder.create().texOffs(24, 16)
-                        .addBox(0f, 0f, -1f, 2, 5, 2),
-                PartPose.ZERO);
+                        .addBox(-1f, -5f, -1f, 2, 5, 2),
+                PartPose.offset(1f, 5f, 0f));
 
         return LayerDefinition.create(mesh, 32, 32);
     }
@@ -99,6 +99,42 @@ public class ClaySoldierEntityModel extends EntityModel<ClaySoldierEntityRenderS
 
     @Override
     public void setupAnim(ClaySoldierEntityRenderState state) {
-        // Future: walk cycle, attack swing, etc.
+        // Reset per-frame animation transforms.
+        head.xRot = 0.0f;
+        head.yRot = 0.0f;
+
+        body.xRot = 0.0f;
+        body.yRot = 0.0f;
+
+        rightArm.xRot = 0.0f;
+        rightArm.yRot = 0.0f;
+        leftArm.xRot = 0.0f;
+        leftArm.yRot = 0.0f;
+
+        rightLeg.xRot = 0.0f;
+        rightLeg.yRot = 0.0f;
+        leftLeg.xRot = 0.0f;
+        leftLeg.yRot = 0.0f;
+
+        float speedNorm = Mth.clamp(state.horizontalSpeed * 8.0f, 0.0f, 1.0f);
+        boolean moving = speedNorm > 0.08f;
+
+        if (moving) {
+            float walk = Mth.sin(state.animTime * 0.7f) * 0.8f * speedNorm;
+            rightLeg.xRot = walk;
+            leftLeg.xRot = -walk;
+            rightArm.xRot = -walk * 0.65f;
+            leftArm.xRot = walk * 0.65f;
+        }
+
+                if (state.attackSwingProgress > 0.0f) {
+                        float arc = Mth.sin(state.attackSwingProgress * Mth.PI);
+
+                        // One-shot punch arc: fast extension and retraction per attack event.
+                        rightArm.xRot = rightArm.xRot - (0.30f + arc * 1.35f);
+                        leftArm.xRot = leftArm.xRot - (0.20f - arc * 0.65f);
+                        rightArm.yRot = 0.16f;
+                        leftArm.yRot = -0.16f;
+        }
     }
 }
