@@ -4,6 +4,7 @@ import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.arguments.BoolArgumentType;
 import io.github.joshiat.claylegion.config.ClayLegionConfig;
 import io.github.joshiat.claylegion.entity.CombatTuning;
+import io.github.joshiat.claylegion.registry.CreativeTabRegistry;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
 import io.github.joshiat.claylegion.registry.ItemRegistry;
 import io.github.joshiat.claylegion.render.RenderTuning;
@@ -28,6 +29,7 @@ public class ClayLegion implements ModInitializer {
 	public void onInitialize() {
 		EntityRegistry.init();
 		ItemRegistry.init();
+		CreativeTabRegistry.init();
 		ClayLegionConfig.loadAndApply(LOGGER);
 		registerCommands();
 		LOGGER.info("Clay Legion initialized.");

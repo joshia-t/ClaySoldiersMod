@@ -1,9 +1,11 @@
 package io.github.joshiat.claylegion.entity;
 
+import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
 import io.github.joshiat.claylegion.item.SoldierDollItem;
 import io.github.joshiat.claylegion.registry.ItemRegistry;
 import io.github.joshiat.claylegion.entity.team.SoldierTeam;
 import io.github.joshiat.claylegion.entity.team.TeamRegistry;
+import io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeState;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
@@ -53,9 +55,14 @@ public class ClaySoldierEntity extends Entity {
     private static final double DRAG = 0.98;
 
     private static final int TARGET_SCAN_INTERVAL = 12;
+    private static final int MOUNT_SCAN_INTERVAL = 8;
     private static final double TARGET_RANGE_XZ = 4.0;
     private static final double TARGET_RANGE_Y = 1.0;
     private static final double TARGET_RANGE_SQ = 8.0 * 8.0;
+    private static final double MOUNT_SEARCH_RANGE = 8.0;
+    private static final double MOUNT_SEARCH_RANGE_SQ = MOUNT_SEARCH_RANGE * MOUNT_SEARCH_RANGE;
+    private static final double MOUNT_BOARD_RANGE = 0.8;
+    private static final double MOUNT_BOARD_RANGE_SQ = MOUNT_BOARD_RANGE * MOUNT_BOARD_RANGE;
 
     private static final double ATTACK_RANGE = 0.8;
     private static final double ATTACK_RANGE_SQ = ATTACK_RANGE * ATTACK_RANGE;
@@ -74,6 +81,7 @@ public class ClaySoldierEntity extends Entity {
     private final UpgradeState upgradeState = new UpgradeState();
 
     private ClaySoldierEntity cachedTarget;
+    private BaseMountEntity cachedMountTarget;
     private int attackCooldown;
     private int jumpAssistCooldown;
     private double obstructionBaseY;
@@ -128,6 +136,10 @@ public class ClaySoldierEntity extends Entity {
         return getSoldierHealth() <= 0f;
     }
 
+    /**
+     * Apply damage to this soldier from a combat attack.
+     * This is the legacy method used for projectiles and non-soldier damage sources.
+     */
     public void applySoldierDamage(float amount, byte attackingTeam) {
         if (level().isClientSide() || isSoldierDead() || amount <= 0.0f) {
             return;
@@ -138,6 +150,63 @@ public class ClaySoldierEntity extends Entity {
             return;
         }
 
+        float newHealth = getSoldierHealth() - amount;
+        setSoldierHealth(newHealth);
+        setHurtFlashTicks(HURT_FLASH_DURATION);
+        if (newHealth <= 0f && level() instanceof ServerLevel serverLevel) {
+            onSoldierKilled(serverLevel);
+        }
+    }
+
+    /**
+     * Apply damage via the combat interaction matrix.
+     * Handles mounted vs unmounted combat scenarios with chance-based target resolution.
+     *
+     * Combat Matrix:
+     *  - Unmounted vs Unmounted: 100% damage to target
+     *  - Unmounted vs Mounted: 80% to mount, 20% to rider
+     *  - Mounted vs Unmounted: 100% damage to target + mount modifier
+     *  - Mounted vs Mounted: 50/50 split between rider and mount
+     */
+    public void applyCombatDamage(float rawDamage, ClaySoldierEntity attacker) {
+        if (level().isClientSide() || isSoldierDead() || rawDamage <= 0.0f) {
+            return;
+        }
+
+        // Friendly-fire suppression
+        if (attacker != null && attacker.getTeamId() == getTeamId()) {
+            return;
+        }
+
+        boolean attackerMounted = attacker != null && attacker.getVehicle() != null;
+        boolean targetMounted = this.getVehicle() != null;
+
+        if (!targetMounted) {
+            // Target is infantry: take full damage
+            processDirectDamage(rawDamage, attacker);
+            return;
+        }
+
+        // Target is mounted: resolve via chance-based roll
+        float roll = this.random.nextFloat();
+        float threshold = attackerMounted ? 0.50f : 0.80f;  // 50/50 if jousting, 80/20 if ground vs cavalry
+
+        Entity mount = this.getVehicle();
+        if (roll < threshold) {
+            // Delegate damage to the mount
+            if (mount instanceof io.github.joshiat.claylegion.entity.mount.BaseMountEntity legacyMount) {
+                legacyMount.applyMountDamage(rawDamage, attacker);
+            }
+        } else {
+            // Damage bypasses mount and hits the rider directly
+            processDirectDamage(rawDamage, attacker);
+        }
+    }
+
+    /**
+     * Process direct damage to the soldier (bypasses mount logic).
+     */
+    private void processDirectDamage(float amount, ClaySoldierEntity attacker) {
         float newHealth = getSoldierHealth() - amount;
         setSoldierHealth(newHealth);
         setHurtFlashTicks(HURT_FLASH_DURATION);
@@ -251,6 +320,10 @@ public class ClaySoldierEntity extends Entity {
         return upgradeState;
     }
 
+    public ClaySoldierEntity getCachedTarget() {
+        return cachedTarget;
+    }
+
     @Override
     public boolean isPickable() {
         // Required so players can ray-hit and attack this non-Living entity.
@@ -279,6 +352,13 @@ public class ClaySoldierEntity extends Entity {
             // running parallel local physics that causes snap-back stutter.
             clientInterpolationTick++;
             applyClientLinearCorrection();
+            return;
+        }
+
+        // Passenger soldiers don't run independent movement physics; mounts drive transport.
+        if (isPassenger()) {
+            setDeltaMovement(Vec3.ZERO);
+            serverCombatTick();
             return;
         }
 
@@ -368,6 +448,10 @@ public class ClaySoldierEntity extends Entity {
             cachedSeparation = sampleSeparationForce();
         }
 
+        if (tryAcquireMount()) {
+            return;
+        }
+
         updateTargetCache();
 
         if (cachedTarget == null) {
@@ -387,12 +471,83 @@ public class ClaySoldierEntity extends Entity {
 
             if (attackCooldown <= 0) {
                 setAttackSwingTicks(ATTACK_SWING_DURATION);
-                cachedTarget.applySoldierDamage(ATTACK_DAMAGE, (byte) getTeamId());
+                cachedTarget.applyCombatDamage(ATTACK_DAMAGE, this);
                 attackCooldown = ATTACK_COOLDOWN_TICKS;
             }
         } else {
             setAiState(SoldierAiState.CHASING);
             chaseTarget(cachedTarget);
+        }
+    }
+
+    private boolean tryAcquireMount() {
+        if (getVehicle() != null) {
+            return false;
+        }
+
+        // Legacy MH_BONE behavior: soldiers with bone upgrade never target mounts.
+        if (upgradeState.has(UpgradeFlags.BONE)) {
+            return false;
+        }
+
+        updateMountTargetCache();
+        if (cachedMountTarget == null) {
+            return false;
+        }
+
+        double distSq = distanceToSqr(cachedMountTarget);
+        if (distSq <= MOUNT_BOARD_RANGE_SQ) {
+            if (cachedMountTarget.getMaxPassengers() > cachedMountTarget.getPassengers().size()) {
+                startRiding(cachedMountTarget);
+            }
+            return true;
+        }
+
+        // Mount looting has higher priority than combat pursuit while unmounted.
+        setAiState(SoldierAiState.CHASING);
+        chaseMount(cachedMountTarget);
+        return true;
+    }
+
+    private void chaseMount(BaseMountEntity mount) {
+        Vec3 to = mount.position().subtract(position());
+        Vec3 horizontal = new Vec3(to.x, 0.0, to.z);
+        double lenSq = horizontal.lengthSqr();
+        if (lenSq < 1.0E-6) {
+            return;
+        }
+
+        Vec3 dir = horizontal.scale(1.0 / Math.sqrt(lenSq));
+        Vec3 velocity = getDeltaMovement()
+            .add(dir.scale(CHASE_ACCEL))
+            .add(cachedSeparation.scale(CombatTuning.getSeparationStrength()));
+
+        double horizontalSpeedSq = velocity.x * velocity.x + velocity.z * velocity.z;
+        double maxSpeedSq = MAX_CHASE_SPEED * MAX_CHASE_SPEED;
+        if (horizontalSpeedSq > maxSpeedSq) {
+            double scale = MAX_CHASE_SPEED / Math.sqrt(horizontalSpeedSq);
+            velocity = new Vec3(velocity.x * scale, velocity.y, velocity.z * scale);
+        }
+
+        setDeltaMovement(velocity);
+        faceMovementOrMount(mount);
+    }
+
+    private void faceMovementOrMount(BaseMountEntity fallbackMount) {
+        Vec3 velocity = getDeltaMovement();
+        double speedSq = velocity.x * velocity.x + velocity.z * velocity.z;
+        if (speedSq > 1.0E-6) {
+            float yaw = (float) (Math.atan2(velocity.z, velocity.x) * (180.0 / Math.PI)) - 90.0f;
+            setYRot(yaw);
+            setYHeadRot(yaw);
+            setYBodyRot(yaw);
+        } else {
+            double dx = fallbackMount.getX() - getX();
+            double dz = fallbackMount.getZ() - getZ();
+            float yaw = (float) (Math.atan2(dz, dx) * (180.0 / Math.PI)) - 90.0f;
+            setYRot(yaw);
+            setYHeadRot(yaw);
+            setYBodyRot(yaw);
         }
     }
 
@@ -555,6 +710,48 @@ public class ClaySoldierEntity extends Entity {
             }
         }
         cachedTarget = best;
+    }
+
+    private void updateMountTargetCache() {
+        if (isValidMountTarget(cachedMountTarget)) {
+            return;
+        }
+
+        cachedMountTarget = null;
+        if (!shouldScanForMount()) {
+            return;
+        }
+
+        AABB scanBox = getBoundingBox().inflate(MOUNT_SEARCH_RANGE, 1.2, MOUNT_SEARCH_RANGE);
+        List<BaseMountEntity> candidates = level().getEntitiesOfClass(
+            BaseMountEntity.class,
+            scanBox,
+            this::isValidMountTarget
+        );
+
+        double bestDistSq = Double.MAX_VALUE;
+        BaseMountEntity best = null;
+        for (BaseMountEntity candidate : candidates) {
+            double distSq = distanceToSqr(candidate);
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                best = candidate;
+            }
+        }
+        cachedMountTarget = best;
+    }
+
+    private boolean shouldScanForMount() {
+        long gameTime = level().getGameTime();
+        return ((gameTime + getId()) % MOUNT_SCAN_INTERVAL) == 0;
+    }
+
+    private boolean isValidMountTarget(BaseMountEntity candidate) {
+        return candidate != null
+            && candidate.isAlive()
+            && !candidate.isRemoved()
+            && candidate.getMaxPassengers() > candidate.getPassengers().size()
+            && distanceToSqr(candidate) <= MOUNT_SEARCH_RANGE_SQ;
     }
 
     private boolean shouldScanForTarget() {

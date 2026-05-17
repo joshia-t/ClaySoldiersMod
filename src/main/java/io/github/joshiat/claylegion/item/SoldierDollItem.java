@@ -22,9 +22,15 @@ import net.minecraft.world.level.Level;
 public class SoldierDollItem extends Item {
 
     private static final String TEAM_TAG = "team";
+    private final int defaultTeamId;
 
     public SoldierDollItem(Properties properties) {
+        this(properties, 0);
+    }
+
+    public SoldierDollItem(Properties properties, int defaultTeamId) {
         super(properties);
+        this.defaultTeamId = defaultTeamId;
     }
 
     @Override
@@ -41,7 +47,7 @@ public class SoldierDollItem extends Item {
 
         // Read team from custom_data: /give @s clay-legion:soldier_doll[minecraft:custom_data={team:5}]
         ItemStack stack = context.getItemInHand();
-        int teamId = getTeamIdFromStack(stack);
+        int teamId = getTeamIdFromStack(stack, defaultTeamId);
         soldier.setTeamId(teamId);
         soldier.setBrickSoldier(stack.getItem() == io.github.joshiat.claylegion.registry.ItemRegistry.BRICK_SOLDIER_DOLL);
 
@@ -66,13 +72,17 @@ public class SoldierDollItem extends Item {
     }
 
     public static int getTeamIdFromStack(ItemStack stack) {
+        return getTeamIdFromStack(stack, 0);
+    }
+
+    public static int getTeamIdFromStack(ItemStack stack, int defaultTeamId) {
         CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
         if (customData == null) {
-            return 0;
+            return defaultTeamId;
         }
 
         CompoundTag tag = customData.copyTag();
-        return tag.contains(TEAM_TAG) ? tag.getInt(TEAM_TAG).orElse(0) : 0;
+        return tag.contains(TEAM_TAG) ? tag.getInt(TEAM_TAG).orElse(defaultTeamId) : defaultTeamId;
     }
 
     public static void setTeamIdOnStack(ItemStack stack, int teamId) {
