@@ -276,6 +276,10 @@ public class ClaySoldierEntity extends Entity {
      * correction ticks so turn updates match the position interpolation quality.
      */
     public float getRenderYaw(float partialTick) {
+        if (level().isClientSide() && isPassenger() && getVehicle() != null) {
+            return getVehicle().getYRot();
+        }
+
         if (!level().isClientSide() || !clientHasCorrectionTarget) {
             return getYRot();
         }
@@ -287,6 +291,11 @@ public class ClaySoldierEntity extends Entity {
      * Returns the client-only interpolated render position for partial-tick smoothing.
      */
     public Vec3 getRenderPosition(float partialTick) {
+        if (level().isClientSide() && isPassenger() && getVehicle() != null) {
+            Entity vehicle = getVehicle();
+            return vehicle.getPosition(partialTick).add(0.0, vehicle.getBbHeight() * 0.55, 0.0);
+        }
+
         if (!level().isClientSide() || !clientHasCorrectionTarget) {
             return position();
         }
@@ -417,16 +426,6 @@ public class ClaySoldierEntity extends Entity {
         super.tick();
 
         if (level().isClientSide()) {
-            if (isPassenger() && getVehicle() != null) {
-                // While mounted, follow vehicle transform directly to avoid visible lag behind mount updates.
-                Vec3 riderPos = getVehicle().position().add(0.0, getVehicle().getBbHeight() * 0.55, 0.0);
-                setPos(riderPos);
-                setYRot(getVehicle().getYRot());
-                setYHeadRot(getYRot());
-                setYBodyRot(getYRot());
-                return;
-            }
-
             // Client is presentation-only: follow server correction arcs and avoid
             // running parallel local physics that causes snap-back stutter.
             clientInterpolationTick++;
@@ -437,6 +436,12 @@ public class ClaySoldierEntity extends Entity {
         // Passenger soldiers don't run independent movement physics; mounts drive transport.
         if (isPassenger()) {
             setDeltaMovement(Vec3.ZERO);
+            if (getVehicle() != null) {
+                float yaw = getVehicle().getYRot();
+                setYRot(yaw);
+                setYHeadRot(yaw);
+                setYBodyRot(yaw);
+            }
             serverCombatTick();
             return;
         }

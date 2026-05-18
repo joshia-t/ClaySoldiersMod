@@ -66,6 +66,77 @@ entity_img.save(os.path.join(out_dir, "clay_soldier.png"))
 print("Entity texture saved:", os.path.join(out_dir, "clay_soldier.png"))
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Mount texture: 32x32 shared atlas for low-poly mount model parts.
+# ──────────────────────────────────────────────────────────────────────────────
+
+MOUNT_BRIGHT = (215, 195, 168, 255)
+MOUNT_LIGHT = (192, 170, 144, 255)
+MOUNT_SIDE = (166, 142, 118, 255)
+MOUNT_DARK = (132, 108, 88, 255)
+MOUNT_BOTTOM = (145, 122, 99, 255)
+
+
+def paint_box_custom(img, u, v, w, h, d, bright, light, side, dark, bottom, shade=1.0):
+    fill(img, u,           v,     u+d,           v+d,   tint(bottom, shade))
+    fill(img, u+d+w,       v,     u+d+w+d,       v+d,   tint(light,  shade))
+    fill(img, u,           v+d,   u+d,           v+d+h, tint(side,   shade))
+    fill(img, u+d,         v+d,   u+d+w,         v+d+h, tint(bright, shade))
+    fill(img, u+d+w,       v+d,   u+d+w+d,       v+d+h, tint(side,   shade))
+    fill(img, u+d+w+d,     v+d,   u+d+w+d+w,     v+d+h, tint(dark,   shade))
+
+
+mount_img = Image.new('RGBA', (64, 64), EMPTY)
+
+# BODY (texOffs 0,0) addBox(..., 6,4,8)
+paint_box_custom(
+    mount_img, 0, 0, 6, 4, 8,
+    MOUNT_BRIGHT, MOUNT_LIGHT, MOUNT_SIDE, MOUNT_DARK, MOUNT_BOTTOM, 0.95
+)
+
+# HEAD (texOffs 0,12) addBox(..., 4,3,3)
+paint_box_custom(
+    mount_img, 0, 12, 4, 3, 3,
+    MOUNT_BRIGHT, MOUNT_LIGHT, MOUNT_SIDE, MOUNT_DARK, MOUNT_BOTTOM, 1.00
+)
+
+# LEGS (texOffs 18,12 and 24,12) addBox(..., 1.4,3,1.4) -> texture uses 1x3x1 footprint
+paint_box_custom(
+    mount_img, 18, 12, 1, 3, 1,
+    MOUNT_BRIGHT, MOUNT_LIGHT, MOUNT_SIDE, MOUNT_DARK, MOUNT_BOTTOM, 0.88
+)
+paint_box_custom(
+    mount_img, 24, 12, 1, 3, 1,
+    MOUNT_BRIGHT, MOUNT_LIGHT, MOUNT_SIDE, MOUNT_DARK, MOUNT_BOTTOM, 0.84
+)
+
+# WINGS (texOffs 0,18) 3x1x6 - slightly lighter for readability
+paint_box_custom(
+    mount_img, 0, 18, 3, 1, 6,
+    (225, 222, 212, 255), (208, 205, 194, 255), (188, 184, 172, 255), (160, 155, 146, 255), (174, 170, 160, 255), 1.0
+)
+
+# SHELL (texOffs 14,18) 7x2x9 - darker green-brown turtle shell tone
+paint_box_custom(
+    mount_img, 14, 18, 7, 2, 9,
+    (110, 126, 86, 255), (96, 112, 76, 255), (82, 95, 64, 255), (63, 74, 50, 255), (72, 84, 56, 255), 1.0
+)
+
+# EARS (texOffs 0,26) 3x2x1 - bunny accent
+paint_box_custom(
+    mount_img, 0, 26, 3, 2, 1,
+    (236, 210, 220, 255), (220, 194, 203, 255), (198, 172, 181, 255), (164, 138, 147, 255), (178, 152, 160, 255), 1.0
+)
+
+# CREST (texOffs 10,26) 1x1x3 - gecko accent
+paint_box_custom(
+    mount_img, 10, 26, 1, 1, 3,
+    (126, 178, 102, 255), (110, 160, 88, 255), (94, 140, 74, 255), (74, 112, 58, 255), (84, 126, 66, 255), 1.0
+)
+
+mount_img.save(os.path.join(out_dir, "clay_mount.png"))
+print("Mount texture saved:", os.path.join(out_dir, "clay_mount.png"))
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Item texture: 16x16 clay-doll silhouette
 # ──────────────────────────────────────────────────────────────────────────────
 

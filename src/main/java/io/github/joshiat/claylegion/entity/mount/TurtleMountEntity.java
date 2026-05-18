@@ -51,8 +51,10 @@ public class TurtleMountEntity extends BaseMountEntity {
             return;
         }
 
-        // Apply 0.5x damage multiplier for Turtle's defensive trait
-        float reducedDamage = amount * DAMAGE_REDUCTION_MULTIPLIER;
+        float reducedDamage = amount;
+        if (getFluidHeight(FluidTags.WATER) > 0.0D) {
+            reducedDamage *= DAMAGE_REDUCTION_MULTIPLIER;
+        }
         float newHealth = getHealth() - reducedDamage;
         setHealth(newHealth);
 

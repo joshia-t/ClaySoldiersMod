@@ -97,6 +97,20 @@ public abstract class BaseMountEntity extends Entity {
     }
 
     @Override
+    protected void positionRider(Entity passenger, Entity.MoveFunction moveFunction) {
+        if (!getPassengers().contains(passenger)) {
+            return;
+        }
+
+        Vec3 riderPos = getPassengerRidingPosition(passenger);
+        moveFunction.accept(passenger, riderPos.x, riderPos.y, riderPos.z);
+        float yaw = getYRot();
+        passenger.setYRot(yaw);
+        passenger.setYHeadRot(yaw);
+        passenger.setYBodyRot(yaw);
+    }
+
+    @Override
     public void tick() {
         super.tick();
 
