@@ -1,22 +1,29 @@
 package io.github.joshiat.claylegion.entity;
 
 import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
+import io.github.joshiat.claylegion.entity.projectile.ClayProjectileEntity;
 import io.github.joshiat.claylegion.item.SoldierDollItem;
+import io.github.joshiat.claylegion.registry.EntityRegistry;
 import io.github.joshiat.claylegion.registry.ItemRegistry;
 import io.github.joshiat.claylegion.entity.team.SoldierTeam;
 import io.github.joshiat.claylegion.entity.team.TeamRegistry;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags;
+import io.github.joshiat.claylegion.entity.upgrade.UpgradeRegistry;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeState;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.level.Level;
@@ -46,8 +53,10 @@ public class ClaySoldierEntity extends Entity {
             SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.BYTE);
     private static final EntityDataAccessor<Byte> HURT_FLASH_TICKS =
             SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.BYTE);
-        private static final EntityDataAccessor<Byte> ATTACK_SWING_TICKS =
+    private static final EntityDataAccessor<Byte> ATTACK_SWING_TICKS =
             SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.BYTE);
+    private static final EntityDataAccessor<Long> ACTIVE_UPGRADES =
+            SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.LONG);
 
     public static final float MAX_HEALTH = 4.0f;
     private static final float ATTACK_DAMAGE = 1.0f;
@@ -57,7 +66,7 @@ public class ClaySoldierEntity extends Entity {
     private static final int TARGET_SCAN_INTERVAL = 12;
     private static final int MOUNT_SCAN_INTERVAL = 8;
     private static final double TARGET_RANGE_XZ = 4.0;
-    private static final double TARGET_RANGE_Y = 1.0;
+    private static final double TARGET_RANGE_Y = 1.8;
     private static final double TARGET_RANGE_SQ = 8.0 * 8.0;
     private static final double MOUNT_SEARCH_RANGE = 8.0;
     private static final double MOUNT_SEARCH_RANGE_SQ = MOUNT_SEARCH_RANGE * MOUNT_SEARCH_RANGE;
@@ -67,6 +76,10 @@ public class ClaySoldierEntity extends Entity {
     private static final double ATTACK_RANGE = 0.8;
     private static final double ATTACK_RANGE_SQ = ATTACK_RANGE * ATTACK_RANGE;
     private static final int ATTACK_COOLDOWN_TICKS = 10;
+    private static final int RANGED_ATTACK_COOLDOWN_TICKS = 18;
+    private static final double RANGED_ATTACK_RANGE = 6.0;
+    private static final double RANGED_ATTACK_RANGE_SQ = RANGED_ATTACK_RANGE * RANGED_ATTACK_RANGE;
+    private static final double PROJECTILE_SPEED = 0.55;
     private static final int ATTACK_SWING_DURATION = 7;
     private static final int HURT_FLASH_DURATION = 8;
 
@@ -77,7 +90,14 @@ public class ClaySoldierEntity extends Entity {
     private static final float CLIENT_INTERPOLATION_DELAY_TICKS = 1.0f;
 
     private static final byte FLAG_BRICK = 0x02;
+    private static final float SLOW_VELOCITY_SCALAR = 0.5f;
+    private static final int SLOW_DURATION_TICKS = 40;
+    private static final int COMBUSTION_DURATION_TICKS = 80;
+    private static final int COMBUSTION_TICK_INTERVAL = 10;
+    private static final float COMBUSTION_DAMAGE = 0.25f;
+    private static final float EMERALD_RAW_DAMAGE_MULTIPLIER = 1.35f;
 
+    private long activeUpgrades;
     private final UpgradeState upgradeState = new UpgradeState();
 
     private ClaySoldierEntity cachedTarget;
@@ -86,6 +106,9 @@ public class ClaySoldierEntity extends Entity {
     private int jumpAssistCooldown;
     private double obstructionBaseY;
     private int obstructionTicks;
+    private int slowTicks;
+    private int combustionTicks;
+    private int combustionDamageCooldown;
     private Vec3 cachedSeparation = Vec3.ZERO;
 
     // Client interpolation buffer: previous and current server-truth snapshots.
@@ -110,6 +133,7 @@ public class ClaySoldierEntity extends Entity {
         builder.define(AI_STATE, (byte) SoldierAiState.IDLE.id);
         builder.define(HURT_FLASH_TICKS, (byte) 0);
         builder.define(ATTACK_SWING_TICKS, (byte) 0);
+        builder.define(ACTIVE_UPGRADES, 0L);
     }
 
     public int getTeamId() {
@@ -169,6 +193,11 @@ public class ClaySoldierEntity extends Entity {
      *  - Mounted vs Mounted: 50/50 split between rider and mount
      */
     public void applyCombatDamage(float rawDamage, ClaySoldierEntity attacker) {
+        applyCombatDamage(rawDamage, attacker, -1.0f, 1.0f);
+    }
+
+    public void applyCombatDamage(float rawDamage, ClaySoldierEntity attacker,
+                                  float riderHitChanceOverride, float rawDamageMultiplier) {
         if (level().isClientSide() || isSoldierDead() || rawDamage <= 0.0f) {
             return;
         }
@@ -180,26 +209,30 @@ public class ClaySoldierEntity extends Entity {
 
         boolean attackerMounted = attacker != null && attacker.getVehicle() != null;
         boolean targetMounted = this.getVehicle() != null;
+        float resolvedDamage = rawDamage * Math.max(0.0f, rawDamageMultiplier);
 
         if (!targetMounted) {
             // Target is infantry: take full damage
-            processDirectDamage(rawDamage, attacker);
+            processDirectDamage(resolvedDamage, attacker);
             return;
         }
 
-        // Target is mounted: resolve via chance-based roll
+        // Target is mounted: resolve via chance-based rider/mount roll.
         float roll = this.random.nextFloat();
-        float threshold = attackerMounted ? 0.50f : 0.80f;  // 50/50 if jousting, 80/20 if ground vs cavalry
+        float riderHitChance = attackerMounted ? 0.50f : 0.20f;
+        if (riderHitChanceOverride >= 0.0f) {
+            riderHitChance = Mth.clamp(riderHitChanceOverride, 0.0f, 1.0f);
+        }
 
         Entity mount = this.getVehicle();
-        if (roll < threshold) {
-            // Delegate damage to the mount
-            if (mount instanceof io.github.joshiat.claylegion.entity.mount.BaseMountEntity legacyMount) {
-                legacyMount.applyMountDamage(rawDamage, attacker);
-            }
+        if (roll < riderHitChance) {
+            // Damage bypasses mount and hits the rider directly.
+            processDirectDamage(resolvedDamage, attacker);
         } else {
-            // Damage bypasses mount and hits the rider directly
-            processDirectDamage(rawDamage, attacker);
+            // Delegate damage to the mount.
+            if (mount instanceof io.github.joshiat.claylegion.entity.mount.BaseMountEntity legacyMount) {
+                legacyMount.applyMountDamage(resolvedDamage, attacker);
+            }
         }
     }
 
@@ -320,6 +353,20 @@ public class ClaySoldierEntity extends Entity {
         return upgradeState;
     }
 
+    public long getActiveUpgrades() {
+        return activeUpgrades;
+    }
+
+    public boolean hasUpgrade(long flag) {
+        return (activeUpgrades & flag) == flag;
+    }
+
+    private void setActiveUpgrades(long upgrades) {
+        this.activeUpgrades = upgrades;
+        this.upgradeState.setRaw(upgrades);
+        this.entityData.set(ACTIVE_UPGRADES, upgrades);
+    }
+
     public ClaySoldierEntity getCachedTarget() {
         return cachedTarget;
     }
@@ -328,6 +375,28 @@ public class ClaySoldierEntity extends Entity {
     public boolean isPickable() {
         // Required so players can ray-hit and attack this non-Living entity.
         return true;
+    }
+
+    @Override
+    public InteractionResult interact(Player player, InteractionHand hand, Vec3 hitPos) {
+        ItemStack held = player.getItemInHand(hand);
+        long upgradeBit = UpgradeRegistry.getBitFor(held.getItem());
+        if (upgradeBit == 0L) {
+            return InteractionResult.PASS;
+        }
+
+        if (level().isClientSide()) {
+            return InteractionResult.SUCCESS;
+        }
+
+        if (!hasUpgrade(upgradeBit)) {
+            setActiveUpgrades(activeUpgrades | upgradeBit);
+            if (!player.getAbilities().instabuild) {
+                held.shrink(1);
+            }
+        }
+
+        return InteractionResult.CONSUME;
     }
 
     @Override
@@ -348,6 +417,16 @@ public class ClaySoldierEntity extends Entity {
         super.tick();
 
         if (level().isClientSide()) {
+            if (isPassenger() && getVehicle() != null) {
+                // While mounted, follow vehicle transform directly to avoid visible lag behind mount updates.
+                Vec3 riderPos = getVehicle().position().add(0.0, getVehicle().getBbHeight() * 0.55, 0.0);
+                setPos(riderPos);
+                setYRot(getVehicle().getYRot());
+                setYHeadRot(getYRot());
+                setYBodyRot(getYRot());
+                return;
+            }
+
             // Client is presentation-only: follow server correction arcs and avoid
             // running parallel local physics that causes snap-back stutter.
             clientInterpolationTick++;
@@ -363,10 +442,22 @@ public class ClaySoldierEntity extends Entity {
         }
 
         if (!onGround()) {
-            setDeltaMovement(getDeltaMovement().add(0.0, -GRAVITY, 0.0));
+            if (isInWater()) {
+                Vec3 buoyant = getDeltaMovement();
+                double waterDepth = getFluidHeight(FluidTags.WATER);
+                double depthError = 0.45 - waterDepth;
+                double y = buoyant.y * 0.55 + Mth.clamp(depthError * 0.08, -0.015, 0.015);
+                setDeltaMovement(buoyant.x * 0.94, y, buoyant.z * 0.94);
+            } else {
+                setDeltaMovement(getDeltaMovement().add(0.0, -GRAVITY, 0.0));
+            }
         }
 
         setDeltaMovement(getDeltaMovement().multiply(DRAG, 1.0, DRAG));
+        if (slowTicks > 0) {
+            Vec3 slowed = getDeltaMovement();
+            setDeltaMovement(slowed.x * SLOW_VELOCITY_SCALAR, slowed.y, slowed.z * SLOW_VELOCITY_SCALAR);
+        }
         move(MoverType.SELF, getDeltaMovement());
 
         serverCombatTick();
@@ -443,6 +534,7 @@ public class ClaySoldierEntity extends Entity {
         if (getAttackSwingTicks() > 0) {
             setAttackSwingTicks(getAttackSwingTicks() - 1);
         }
+        tickStatusEffects();
 
         if (((level().getGameTime() + getId()) % SEPARATION_UPDATE_INTERVAL) == 0) {
             cachedSeparation = sampleSeparationForce();
@@ -462,6 +554,12 @@ public class ClaySoldierEntity extends Entity {
         }
 
         double distSq = distanceToSqr(cachedTarget);
+        if (distSq > ATTACK_RANGE_SQ && distSq <= RANGED_ATTACK_RANGE_SQ && tryRangedAttack(cachedTarget)) {
+            setAiState(SoldierAiState.ATTACKING);
+            faceTarget(cachedTarget);
+            return;
+        }
+
         if (distSq <= ATTACK_RANGE_SQ) {
             setAiState(SoldierAiState.ATTACKING);
 
@@ -480,13 +578,91 @@ public class ClaySoldierEntity extends Entity {
         }
     }
 
+    private void tickStatusEffects() {
+        if (slowTicks > 0) {
+            slowTicks--;
+        }
+
+        if (combustionTicks > 0) {
+            combustionTicks--;
+            if (combustionDamageCooldown > 0) {
+                combustionDamageCooldown--;
+            }
+
+            if (combustionDamageCooldown <= 0) {
+                combustionDamageCooldown = COMBUSTION_TICK_INTERVAL;
+                RuntimeTelemetry.recordCombustionDamageTick();
+                applySoldierDamage(COMBUSTION_DAMAGE, (byte) -1);
+            }
+        } else {
+            combustionDamageCooldown = 0;
+        }
+    }
+
+    private boolean tryRangedAttack(ClaySoldierEntity target) {
+        if (attackCooldown > 0) {
+            return false;
+        }
+
+        ClayProjectileEntity projectile = createProjectileForUpgrades();
+        if (projectile == null) {
+            return false;
+        }
+
+        Vec3 origin = position().add(0.0, 0.22, 0.0);
+        Vec3 direction = target.position().add(0.0, 0.16, 0.0).subtract(origin);
+        double length = direction.length();
+        if (length < 1.0E-6) {
+            return false;
+        }
+
+        Vec3 velocity = direction.scale(PROJECTILE_SPEED / length);
+        projectile.setPos(origin);
+        projectile.setShooter(this);
+        projectile.setDeltaMovement(velocity);
+        level().addFreshEntity(projectile);
+        setAttackSwingTicks(ATTACK_SWING_DURATION);
+        attackCooldown = RANGED_ATTACK_COOLDOWN_TICKS;
+        return true;
+    }
+
+    private ClayProjectileEntity createProjectileForUpgrades() {
+        if (hasUpgrade(UpgradeFlags.EMERALD)) {
+            return EntityRegistry.EMERALD_PROJECTILE.create(level(), EntitySpawnReason.SPAWN_ITEM_USE);
+        }
+        if (hasUpgrade(UpgradeFlags.FIRE_CHARGE)) {
+            return EntityRegistry.FIRE_CHARGE_PROJECTILE.create(level(), EntitySpawnReason.SPAWN_ITEM_USE);
+        }
+        if (hasUpgrade(UpgradeFlags.SNOW)) {
+            return EntityRegistry.SNOW_PROJECTILE.create(level(), EntitySpawnReason.SPAWN_ITEM_USE);
+        }
+        if (hasUpgrade(UpgradeFlags.GRAVEL) || hasUpgrade(UpgradeFlags.FLINT)) {
+            return EntityRegistry.GRAVEL_PROJECTILE.create(level(), EntitySpawnReason.SPAWN_ITEM_USE);
+        }
+        return null;
+    }
+
+    public void applySnowPayload() {
+        slowTicks = Math.max(slowTicks, SLOW_DURATION_TICKS);
+        RuntimeTelemetry.recordSlowPayload();
+    }
+
+    public void applyFirePayload() {
+        combustionTicks = Math.max(combustionTicks, COMBUSTION_DURATION_TICKS);
+        RuntimeTelemetry.recordCombustionPayload();
+    }
+
+    public void applyEmeraldPayload(ClaySoldierEntity attacker, float damage) {
+        applyCombatDamage(damage, attacker, 1.0f, EMERALD_RAW_DAMAGE_MULTIPLIER);
+    }
+
     private boolean tryAcquireMount() {
         if (getVehicle() != null) {
             return false;
         }
 
         // Legacy MH_BONE behavior: soldiers with bone upgrade never target mounts.
-        if (upgradeState.has(UpgradeFlags.BONE)) {
+        if (hasUpgrade(UpgradeFlags.BONE)) {
             return false;
         }
 
@@ -785,6 +961,8 @@ public class ClaySoldierEntity extends Entity {
         setFlags(input.getByteOr("EntityFlags", (byte) 0));
         setAiState(SoldierAiState.fromId(input.getByteOr("AiState", (byte) 0)));
         upgradeState.readFromStorage(input);
+        long persisted = input.getLong("ActiveUpgrades").orElse(upgradeState.getRaw());
+        setActiveUpgrades(persisted);
     }
 
     @Override
@@ -793,7 +971,17 @@ public class ClaySoldierEntity extends Entity {
         output.putFloat("Health", getSoldierHealth());
         output.putByte("EntityFlags", getFlags());
         output.putByte("AiState", getAiState().id);
+        output.putLong("ActiveUpgrades", activeUpgrades);
         upgradeState.writeToStorage(output);
+    }
+
+    @Override
+    public void onSyncedDataUpdated(EntityDataAccessor<?> key) {
+        super.onSyncedDataUpdated(key);
+        if (ACTIVE_UPGRADES.equals(key)) {
+            this.activeUpgrades = entityData.get(ACTIVE_UPGRADES);
+            this.upgradeState.setRaw(this.activeUpgrades);
+        }
     }
 
     @Override

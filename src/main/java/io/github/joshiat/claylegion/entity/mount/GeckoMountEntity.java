@@ -1,6 +1,8 @@
 package io.github.joshiat.claylegion.entity.mount;
 
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
+import io.github.joshiat.claylegion.entity.RuntimeTelemetry;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
@@ -35,20 +37,28 @@ public class GeckoMountEntity extends BaseMountEntity {
 
     @Override
     protected void applyMountMovement(Vec3 soldierVelocity, ClaySoldierEntity soldier) {
-        Vec3 currentVelocity = getDeltaMovement();
+        // Check if the Gecko is against a horizontal surface (horizontalCollision flag).
+        if (horizontalCollision) {
+            RuntimeTelemetry.recordGeckoClimbTick();
 
-        // Check if the Gecko is against a horizontal surface (horizontalCollision flag)
-        if (horizontalCollision && !onGround()) {
-            // Wall-climbing: nullify gravity and translate vertically along the wall
-            double targetClimbVelocity = CLIMB_SPEED;
-            double newYVelocity = currentVelocity.y + Math.signum(targetClimbVelocity - currentVelocity.y) * CLIMB_ACCEL;
-            newYVelocity = Math.max(-CLIMB_SPEED, Math.min(CLIMB_SPEED, newYVelocity));
+            double forwardMag = Math.sqrt(soldierVelocity.x * soldierVelocity.x + soldierVelocity.z * soldierVelocity.z);
+            double climbTarget = Math.max(CLIMB_SPEED, forwardMag);
+            double climbY = Mth.clamp(climbTarget, 0.0, CLIMB_SPEED + CLIMB_ACCEL);
 
-            // Apply horizontal velocity from soldier + climbing velocity
-            setDeltaMovement(soldierVelocity.x, newYVelocity, soldierVelocity.z);
+            // Map forward momentum into vertical traversal while preserving slight wall adhesion.
+            double wallX = soldierVelocity.x * 0.15;
+            double wallZ = soldierVelocity.z * 0.15;
+            setDeltaMovement(wallX, climbY, wallZ);
+
+            // Keep rider orientation aligned while climbing.
+            setYRot(soldier.getYRot());
+            setXRot(-75.0f);
+            soldier.setYRot(getYRot());
+            soldier.setXRot(getXRot());
         } else {
             // Normal movement: apply soldier's velocity as-is
             setDeltaMovement(soldierVelocity);
+            setXRot(0.0f);
         }
     }
 

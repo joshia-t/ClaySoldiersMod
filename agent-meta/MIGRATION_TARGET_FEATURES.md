@@ -44,6 +44,7 @@ This document serves as the architectural baseline and practical parity checklis
 - [ ] Placeholder asset swap for production render models/textures
 
 ### Phase 3: Upgrade Parity
+- [x] Early scaffold: upgrade registry + ingestion + debug inspection pipeline pulled forward to unblock Phase 2 projectile/mount validation
 - [ ] All 60 upgrade behaviors implemented via bitfield processing
 - [ ] Incompatibility rule processing engines (e.g., Sugar vs. Diamond)
 - [ ] Conditional status effects (Blind, Explode, Zombify, Revive)

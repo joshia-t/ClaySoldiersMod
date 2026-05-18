@@ -1,6 +1,7 @@
 package io.github.joshiat.claylegion.entity.projectile;
 
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
+import io.github.joshiat.claylegion.entity.RuntimeTelemetry;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
@@ -108,12 +109,14 @@ public abstract class ClayProjectileEntity extends Entity {
                 if (shooter instanceof ClaySoldierEntity shooterSoldier) {
                     if (soldier.getTeamId() != shooterSoldier.getTeamId()) {
                         // Hit detected: apply payload
+                        RuntimeTelemetry.recordProjectileImpact();
                         onHitSoldier(soldier);
                         discard();
                         return;
                     }
                 } else {
                     // Non-soldier shooter; damage any soldier
+                    RuntimeTelemetry.recordProjectileImpact();
                     onHitSoldier(soldier);
                     discard();
                     return;

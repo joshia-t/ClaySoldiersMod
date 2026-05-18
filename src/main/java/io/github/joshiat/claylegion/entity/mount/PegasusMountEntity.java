@@ -1,6 +1,7 @@
 package io.github.joshiat.claylegion.entity.mount;
 
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
+import io.github.joshiat.claylegion.entity.RuntimeTelemetry;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
@@ -35,20 +36,27 @@ public class PegasusMountEntity extends BaseMountEntity {
 
     @Override
     protected void applyMountMovement(Vec3 soldierVelocity, ClaySoldierEntity soldier) {
-        // Extract horizontal movement from soldier's velocity
         Vec3 currentVelocity = getDeltaMovement();
-        Vec3 horizontalMovement = new Vec3(soldierVelocity.x, 0.0, soldierVelocity.z);
+        Vec3 result = new Vec3(soldierVelocity.x, currentVelocity.y, soldierVelocity.z);
 
-        // Determine target height: if the soldier has a target, fly toward it at altitude_offset
-        double targetY = getY();
+        // Elevate chase vectors to full 3D deltas for aerial pursuit.
         ClaySoldierEntity target = soldier.getCachedTarget();
         if (target != null) {
-            targetY = target.getY() + ALTITUDE_OFFSET;
+            RuntimeTelemetry.recordPegasusFlightTick();
+
+            Vec3 delta = target.position().add(0.0, ALTITUDE_OFFSET, 0.0).subtract(position());
+            double lenSq = delta.lengthSqr();
+            if (lenSq > 1.0E-6) {
+                Vec3 dir = delta.scale(1.0 / Math.sqrt(lenSq));
+                double horizontalMag = Math.sqrt(soldierVelocity.x * soldierVelocity.x + soldierVelocity.z * soldierVelocity.z);
+                double speed = Math.max(0.08, horizontalMag);
+                result = new Vec3(dir.x * speed, currentVelocity.y, dir.z * speed);
+            }
         }
 
-        // Adjust vertical velocity toward target height
+        double targetY = target != null ? target.getY() + ALTITUDE_OFFSET : getY();
         double yDifference = targetY - getY();
-        double newYVelocity = currentVelocity.y;
+        double newYVelocity = Math.max(currentVelocity.y, soldierVelocity.y);
 
         if (Math.abs(yDifference) > 0.05) {
             newYVelocity += Math.signum(yDifference) * VERTICAL_ACCEL;
@@ -58,7 +66,7 @@ public class PegasusMountEntity extends BaseMountEntity {
             newYVelocity *= 0.9;
         }
 
-        setDeltaMovement(horizontalMovement.x, newYVelocity, horizontalMovement.z);
+        setDeltaMovement(result.x, newYVelocity, result.z);
     }
 
     @Override

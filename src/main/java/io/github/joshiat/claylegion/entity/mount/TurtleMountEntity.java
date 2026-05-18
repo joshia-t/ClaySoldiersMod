@@ -1,6 +1,10 @@
 package io.github.joshiat.claylegion.entity.mount;
 
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
+import io.github.joshiat.claylegion.entity.RuntimeTelemetry;
+import net.minecraft.tags.FluidTags;
+import net.minecraft.util.Mth;
+import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
@@ -15,6 +19,10 @@ import net.minecraft.world.phys.Vec3;
  */
 public class TurtleMountEntity extends BaseMountEntity {
 
+    private static final double LAND_GRAVITY = 0.08;
+    private static final double LAND_DRAG = 0.98;
+    private static final double WATER_DRAG = 0.99;
+    private static final double WATER_TARGET_DEPTH = 0.55;
     private static final float DAMAGE_REDUCTION_MULTIPLIER = 0.5f;
 
     public TurtleMountEntity(EntityType<? extends BaseMountEntity> type, Level level) {
@@ -64,8 +72,32 @@ public class TurtleMountEntity extends BaseMountEntity {
     }
 
     @Override
-    protected void serverMountTick() {
-        // Standard mount tick but with fluid resistance handling
-        super.serverMountTick();
+    public void tick() {
+        super.baseTick();
+
+        if (level().isClientSide()) {
+            return;
+        }
+
+        serverMountTick();
+
+        Vec3 velocity = getDeltaMovement();
+        double waterDepth = getFluidHeight(FluidTags.WATER);
+        if (waterDepth > 0.0D) {
+            RuntimeTelemetry.recordTurtleWaterTick();
+
+            double depthError = WATER_TARGET_DEPTH - waterDepth;
+            double newY = velocity.y * 0.55 + Mth.clamp(depthError * 0.08, -0.02, 0.02);
+
+            velocity = new Vec3(velocity.x * WATER_DRAG, newY, velocity.z * WATER_DRAG);
+        } else {
+            if (!onGround()) {
+                velocity = velocity.add(0.0, -LAND_GRAVITY, 0.0);
+            }
+            velocity = velocity.multiply(LAND_DRAG, 1.0, LAND_DRAG);
+        }
+
+        setDeltaMovement(velocity);
+        move(MoverType.SELF, velocity);
     }
 }

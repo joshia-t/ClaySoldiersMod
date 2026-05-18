@@ -1,6 +1,7 @@
 package io.github.joshiat.claylegion.entity.projectile;
 
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
+import io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.EntityType;
@@ -34,9 +35,13 @@ public class EmeraldProjectileEntity extends ClayProjectileEntity {
 
     @Override
     protected void onHitSoldier(ClaySoldierEntity target) {
+        if (shooter instanceof ClaySoldierEntity shooterSoldier
+                && shooterSoldier.hasUpgrade(UpgradeFlags.EMERALD)) {
+            target.applyEmeraldPayload(shooterSoldier, getDamage());
+            return;
+        }
+
         super.onHitSoldier(target);
-        // TODO: Apply piercing damage multiplier or armor-piercing effect
-        // Emerald projectiles could bypass certain defenses or deal bonus damage
     }
 
     @Override

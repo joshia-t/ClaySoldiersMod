@@ -13,6 +13,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.util.Mth;
 
 /**
  * Base mount entity class for all 5 mount types (Horse, Pegasus, Turtle, Bunny, Gecko).
@@ -34,6 +35,9 @@ public abstract class BaseMountEntity extends Entity {
 
     private static final double GRAVITY = 0.08;
     private static final double DRAG = 0.98;
+    private static final double MOUNT_CHASE_SPEED = 0.24;
+    private static final float MOUNT_CHASE_BLEND = 0.35f;
+    private static final double MOUNT_JUMP_VELOCITY = 0.46;
 
     public BaseMountEntity(EntityType<? extends BaseMountEntity> type, Level level) {
         super(type, level);
@@ -97,8 +101,17 @@ public abstract class BaseMountEntity extends Entity {
         super.tick();
 
         if (level().isClientSide()) {
+            // Client-side local integration smooths mount visuals between server updates.
+            if (!onGround()) {
+                setDeltaMovement(getDeltaMovement().add(0.0, -GRAVITY, 0.0));
+            }
+
+            setDeltaMovement(getDeltaMovement().multiply(DRAG, 1.0, DRAG));
+            move(MoverType.SELF, getDeltaMovement());
             return;
         }
+
+        serverMountTick();
 
         // Apply gravity and drag to match standard physics.
         if (!onGround()) {
@@ -107,18 +120,49 @@ public abstract class BaseMountEntity extends Entity {
 
         setDeltaMovement(getDeltaMovement().multiply(DRAG, 1.0, DRAG));
         move(MoverType.SELF, getDeltaMovement());
-
-        serverMountTick();
     }
 
     protected void serverMountTick() {
         // Pull movement vector from the riding soldier's AI state (if mounted).
         Entity passenger = getPassengers().isEmpty() ? null : getPassengers().get(0);
         if (passenger instanceof ClaySoldierEntity soldier) {
-            // The mounted soldier's target-seeking logic drives the mount's velocity.
-            // This avoids duplicating pathfinding logic and keeps the system hierarchically flat.
-            Vec3 soldierVelocity = soldier.getDeltaMovement();
-            applyMountMovement(soldierVelocity, soldier);
+            Vec3 current = getDeltaMovement();
+            Vec3 desiredHorizontal = Vec3.ZERO;
+            ClaySoldierEntity target = soldier.getCachedTarget();
+            if (target != null && soldier.getAiState() != ClaySoldierEntity.SoldierAiState.ATTACKING) {
+                Vec3 to = target.position().subtract(position());
+                Vec3 horizontal = new Vec3(to.x, 0.0, to.z);
+                double lenSq = horizontal.lengthSqr();
+                if (lenSq > 1.0E-6) {
+                    double inv = 1.0 / Math.sqrt(lenSq);
+                    desiredHorizontal = horizontal.scale(inv * MOUNT_CHASE_SPEED);
+                }
+            }
+
+            Vec3 blended = new Vec3(
+                Mth.lerp(MOUNT_CHASE_BLEND, current.x, desiredHorizontal.x),
+                current.y,
+                Mth.lerp(MOUNT_CHASE_BLEND, current.z, desiredHorizontal.z)
+            );
+
+            if (soldier.getAiState() == ClaySoldierEntity.SoldierAiState.ATTACKING) {
+                blended = new Vec3(blended.x * 0.25, blended.y, blended.z * 0.25);
+            }
+
+            if (horizontalCollision && onGround()) {
+                blended = new Vec3(blended.x, Math.max(blended.y, MOUNT_JUMP_VELOCITY), blended.z);
+            }
+
+            applyMountMovement(blended, soldier);
+
+            Vec3 motion = getDeltaMovement();
+            double speedSq = motion.x * motion.x + motion.z * motion.z;
+            if (speedSq > 1.0E-6) {
+                float yaw = (float) (Math.atan2(motion.z, motion.x) * (180.0 / Math.PI)) - 90.0f;
+                setYRot(yaw);
+                setYHeadRot(yaw);
+                setYBodyRot(yaw);
+            }
         } else {
             // No rider: drop to idle state (zero out horizontal velocity).
             Vec3 v = getDeltaMovement();
@@ -165,9 +209,8 @@ public abstract class BaseMountEntity extends Entity {
     @Override
     public boolean hurtServer(ServerLevel serverLevel, DamageSource source, float amount) {
         Entity attacker = source.getEntity();
-        if (attacker instanceof ClaySoldierEntity soldier) {
-            applyMountDamage(amount, soldier);
-        }
+        ClaySoldierEntity soldierAttacker = attacker instanceof ClaySoldierEntity s ? s : null;
+        applyMountDamage(amount, soldierAttacker);
         return !isMountDead();
     }
 
