@@ -19,6 +19,7 @@ public final class CreativeTabRegistry {
         .icon(() -> new ItemStack(ItemRegistry.RED_SOLDIER_DOLL))
         .title(net.minecraft.network.chat.Component.translatable("creativeTab.clay-legion.clay_legion"))
         .displayItems((parameters, output) -> {
+            output.accept(ItemRegistry.CLAY_NEXUS);
             output.accept(ItemRegistry.SOLDIER_DOLL);
             output.accept(ItemRegistry.RED_SOLDIER_DOLL);
             output.accept(ItemRegistry.BRICK_SOLDIER_DOLL);

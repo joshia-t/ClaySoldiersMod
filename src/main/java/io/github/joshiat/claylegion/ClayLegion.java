@@ -2,12 +2,15 @@ package io.github.joshiat.claylegion;
 
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.arguments.BoolArgumentType;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import io.github.joshiat.claylegion.config.ClayLegionConfig;
 import io.github.joshiat.claylegion.entity.CombatTuning;
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
 import io.github.joshiat.claylegion.entity.RuntimeTelemetry;
 import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
 import io.github.joshiat.claylegion.entity.mount.TurtleMountEntity;
+import io.github.joshiat.claylegion.registry.BlockEntityRegistry;
+import io.github.joshiat.claylegion.registry.BlockRegistry;
 import io.github.joshiat.claylegion.registry.CreativeTabRegistry;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
 import io.github.joshiat.claylegion.registry.ItemRegistry;
@@ -41,6 +44,8 @@ public class ClayLegion implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		BlockRegistry.init();
+		BlockEntityRegistry.init();
 		EntityRegistry.init();
 		ItemRegistry.init();
 		CreativeTabRegistry.init();
@@ -159,6 +164,20 @@ public class ClayLegion implements ModInitializer {
 							.then(argument("value", BoolArgumentType.bool())
 								.executes(ctx -> {
 									CombatTuning.setSoldierCollisionEnabled(BoolArgumentType.getBool(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
+						.then(literal("nexusMaxSpawnLimit")
+							.then(argument("value", IntegerArgumentType.integer(0))
+								.executes(ctx -> {
+									ClayLegionConfig.setNexusMaxSpawnLimit(IntegerArgumentType.getInteger(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
+						.then(literal("nexusMaxSpawnCount")
+							.then(argument("value", IntegerArgumentType.integer(0))
+								.executes(ctx -> {
+									ClayLegionConfig.setNexusMaxSpawnCount(IntegerArgumentType.getInteger(ctx, "value"));
 									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
 									return sendCurrentConfig(ctx.getSource());
 								})))
@@ -326,6 +345,8 @@ public class ClayLegion implements ModInitializer {
 				+ ", combat.idleHorizontalBrake=" + CombatTuning.getIdleHorizontalBrake()
 				+ ", combat.playerDamageMultiplier=" + CombatTuning.getPlayerDamageMultiplier()
 				+ ", combat.soldierCollisionEnabled=" + CombatTuning.isSoldierCollisionEnabled()
+				+ ", nexus.maxSpawnLimit=" + ClayLegionConfig.getNexusMaxSpawnLimit()
+				+ ", nexus.maxSpawnCount=" + ClayLegionConfig.getNexusMaxSpawnCount()
 		), false);
 		return 1;
 	}

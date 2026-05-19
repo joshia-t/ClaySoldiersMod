@@ -7,6 +7,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 
 public final class ItemRegistry {
@@ -51,6 +52,11 @@ public final class ItemRegistry {
         Identifier.fromNamespaceAndPath("clay-legion", "gecko_spawner")
     );
 
+    private static final ResourceKey<Item> CLAY_NEXUS_KEY = ResourceKey.create(
+        Registries.ITEM,
+        Identifier.fromNamespaceAndPath("clay-legion", "clay_nexus")
+    );
+
     public static final SoldierDollItem SOLDIER_DOLL = new SoldierDollItem(
         new Item.Properties().stacksTo(64).setId(SOLDIER_DOLL_KEY)
     );
@@ -89,6 +95,11 @@ public final class ItemRegistry {
         EntityRegistry.GECKO_MOUNT
     );
 
+    public static final BlockItem CLAY_NEXUS = new BlockItem(
+        BlockRegistry.CLAY_NEXUS,
+        new Item.Properties().stacksTo(64).setId(CLAY_NEXUS_KEY)
+    );
+
     public static void init() {
         Registry.register(BuiltInRegistries.ITEM, SOLDIER_DOLL_KEY, SOLDIER_DOLL);
         Registry.register(BuiltInRegistries.ITEM, BRICK_SOLDIER_DOLL_KEY, BRICK_SOLDIER_DOLL);
@@ -98,6 +109,7 @@ public final class ItemRegistry {
         Registry.register(BuiltInRegistries.ITEM, TURTLE_SPAWNER_KEY, TURTLE_SPAWNER);
         Registry.register(BuiltInRegistries.ITEM, BUNNY_SPAWNER_KEY, BUNNY_SPAWNER);
         Registry.register(BuiltInRegistries.ITEM, GECKO_SPAWNER_KEY, GECKO_SPAWNER);
+        Registry.register(BuiltInRegistries.ITEM, CLAY_NEXUS_KEY, CLAY_NEXUS);
     }
 
     private ItemRegistry() {}

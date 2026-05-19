@@ -18,8 +18,29 @@ import java.util.Map;
 public final class ClayLegionConfig {
 
     private static final String FILE_NAME = "claylegion.yml";
+    private static final int DEFAULT_NEXUS_MAX_SPAWN_LIMIT = 10;
+    private static final int DEFAULT_NEXUS_MAX_SPAWN_COUNT = 10;
+
+    private static int nexusMaxSpawnLimit = DEFAULT_NEXUS_MAX_SPAWN_LIMIT;
+    private static int nexusMaxSpawnCount = DEFAULT_NEXUS_MAX_SPAWN_COUNT;
 
     private ClayLegionConfig() {
+    }
+
+    public static int getNexusMaxSpawnLimit() {
+        return nexusMaxSpawnLimit;
+    }
+
+    public static void setNexusMaxSpawnLimit(int value) {
+        nexusMaxSpawnLimit = Math.max(0, value);
+    }
+
+    public static int getNexusMaxSpawnCount() {
+        return nexusMaxSpawnCount;
+    }
+
+    public static void setNexusMaxSpawnCount(int value) {
+        nexusMaxSpawnCount = Math.max(0, value);
     }
 
     public static Path getConfigPath() {
@@ -53,6 +74,12 @@ public final class ClayLegionConfig {
                     setIfNumber(combat.get("playerDamageMultiplier"), CombatTuning::setPlayerDamageMultiplier);
                     setIfBoolean(combat.get("soldierCollisionEnabled"), CombatTuning::setSoldierCollisionEnabled);
                 }
+
+                Object nexusObj = root.get("nexus");
+                if (nexusObj instanceof Map<?, ?> nexus) {
+                    setIfInt(nexus.get("maxSpawnLimit"), ClayLegionConfig::setNexusMaxSpawnLimit);
+                    setIfInt(nexus.get("maxSpawnCount"), ClayLegionConfig::setNexusMaxSpawnCount);
+                }
             }
         } catch (Exception ex) {
             logger.error("Failed to load ClayLegion config from {}", path, ex);
@@ -71,8 +98,11 @@ public final class ClayLegionConfig {
                                     separationStrength: %s
                                     obstacleStrafeStrength: %s
                   idleHorizontalBrake: %s
-                  playerDamageMultiplier: %s
+                                    playerDamageMultiplier: %s
                                     soldierCollisionEnabled: %s
+                                nexus:
+                                    maxSpawnLimit: %s
+                                    maxSpawnCount: %s
                 """.formatted(
                 trimFloat(CombatTuning.getMaxObstacleClimbHeight()),
                                 trimFloat(CombatTuning.getJumpAssistVelocity()),
@@ -81,7 +111,9 @@ public final class ClayLegionConfig {
                                 trimFloat(CombatTuning.getObstacleStrafeStrength()),
                 trimFloat(CombatTuning.getIdleHorizontalBrake()),
                                 trimFloat(CombatTuning.getPlayerDamageMultiplier()),
-                                Boolean.toString(CombatTuning.isSoldierCollisionEnabled())
+                                Boolean.toString(CombatTuning.isSoldierCollisionEnabled()),
+                                Integer.toString(getNexusMaxSpawnLimit()),
+                                Integer.toString(getNexusMaxSpawnCount())
         );
 
         try {
@@ -104,6 +136,12 @@ public final class ClayLegionConfig {
         }
     }
 
+    private static void setIfInt(Object raw, IntConsumer consumer) {
+        if (raw instanceof Number n) {
+            consumer.accept(n.intValue());
+        }
+    }
+
     private static String trimFloat(float value) {
         if (value == (long) value) {
             return Long.toString((long) value);
@@ -119,5 +157,10 @@ public final class ClayLegionConfig {
     @FunctionalInterface
     private interface BooleanConsumer {
         void accept(boolean value);
+    }
+
+    @FunctionalInterface
+    private interface IntConsumer {
+        void accept(int value);
     }
 }

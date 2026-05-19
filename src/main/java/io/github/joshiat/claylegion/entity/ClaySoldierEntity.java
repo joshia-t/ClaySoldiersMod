@@ -32,6 +32,7 @@ import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.util.Mth;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Core clay soldier entity.
@@ -90,6 +91,7 @@ public class ClaySoldierEntity extends Entity {
     private static final float CLIENT_INTERPOLATION_DELAY_TICKS = 1.0f;
 
     private static final byte FLAG_BRICK = 0x02;
+    private static final byte FLAG_NEXUS_SUMMON = 0x04;
     private static final float SLOW_VELOCITY_SCALAR = 0.5f;
     private static final int SLOW_DURATION_TICKS = 40;
     private static final int COMBUSTION_DURATION_TICKS = 80;
@@ -110,6 +112,7 @@ public class ClaySoldierEntity extends Entity {
     private int combustionTicks;
     private int combustionDamageCooldown;
     private Vec3 cachedSeparation = Vec3.ZERO;
+    private UUID nexusOriginId;
 
     // Client interpolation buffer: previous and current server-truth snapshots.
     private boolean clientHasCorrectionTarget;
@@ -356,6 +359,23 @@ public class ClaySoldierEntity extends Entity {
     public void setBrickSoldier(boolean brick) {
         byte flags = getFlags();
         setFlags(brick ? (byte) (flags | FLAG_BRICK) : (byte) (flags & ~FLAG_BRICK));
+    }
+
+    public boolean isNexusSummon() {
+        return (getFlags() & FLAG_NEXUS_SUMMON) != 0;
+    }
+
+    public void setNexusSummon(boolean summoned) {
+        byte flags = getFlags();
+        setFlags(summoned ? (byte) (flags | FLAG_NEXUS_SUMMON) : (byte) (flags & ~FLAG_NEXUS_SUMMON));
+    }
+
+    public UUID getNexusOriginId() {
+        return nexusOriginId;
+    }
+
+    public void setNexusOriginId(UUID nexusOriginId) {
+        this.nexusOriginId = nexusOriginId;
     }
 
     public UpgradeState getUpgradeState() {
@@ -951,6 +971,11 @@ public class ClaySoldierEntity extends Entity {
     }
 
     private void onSoldierKilled(ServerLevel serverLevel) {
+        if (isNexusSummon()) {
+            discard();
+            return;
+        }
+
         ItemStack drop = new ItemStack(isBrickSoldier()
             ? ItemRegistry.BRICK_SOLDIER_DOLL
             : ItemRegistry.SOLDIER_DOLL);
@@ -968,6 +993,16 @@ public class ClaySoldierEntity extends Entity {
         upgradeState.readFromStorage(input);
         long persisted = input.getLong("ActiveUpgrades").orElse(upgradeState.getRaw());
         setActiveUpgrades(persisted);
+        String persistedNexusOriginId = input.getString("NexusOriginId").orElse(null);
+        if (persistedNexusOriginId != null && !persistedNexusOriginId.isBlank()) {
+            try {
+                nexusOriginId = UUID.fromString(persistedNexusOriginId);
+            } catch (IllegalArgumentException ignored) {
+                nexusOriginId = null;
+            }
+        } else {
+            nexusOriginId = null;
+        }
     }
 
     @Override
@@ -977,6 +1012,9 @@ public class ClaySoldierEntity extends Entity {
         output.putByte("EntityFlags", getFlags());
         output.putByte("AiState", getAiState().id);
         output.putLong("ActiveUpgrades", activeUpgrades);
+        if (nexusOriginId != null) {
+            output.putString("NexusOriginId", nexusOriginId.toString());
+        }
         upgradeState.writeToStorage(output);
     }
 
