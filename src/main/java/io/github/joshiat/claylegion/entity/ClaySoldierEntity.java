@@ -88,7 +88,12 @@ public class ClaySoldierEntity extends Entity {
     private static final double MAX_CHASE_SPEED = 0.1;
     private static final int JUMP_ASSIST_COOLDOWN_TICKS = 6;
     private static final int SEPARATION_UPDATE_INTERVAL = 4;
-    private static final float CLIENT_INTERPOLATION_DELAY_TICKS = 1.0f;
+    // Sanity bounds on the auto-measured correction interval the glide is
+    // spread over. The duration self-tunes to the real packet cadence; these
+    // only cap a dropped/bunched packet so it eases to rest at the true
+    // position instead of slow-motion drifting or snapping.
+    private static final int MIN_INTERP_DURATION_TICKS = 1;
+    private static final int MAX_INTERP_DURATION_TICKS = 6;
 
     private static final byte FLAG_BRICK = 0x02;
     private static final byte FLAG_NEXUS_SUMMON = 0x04;
@@ -118,15 +123,21 @@ public class ClaySoldierEntity extends Entity {
     private Vec3 cachedSeparation = Vec3.ZERO;
     private UUID nexusOriginId;
 
-    // Client interpolation buffer: previous and current server-truth snapshots.
+    // Client interpolation: glide from the transform we had when the last
+    // correction arrived ("from") to the server target ("to") at a constant
+    // rate over `clientLerpDurationTicks`. The duration self-tunes (EMA) to
+    // the measured packet-arrival interval so the glide bridges exactly
+    // packet-to-packet regardless of the server's tracking cadence.
     private boolean clientHasCorrectionTarget;
-    private double clientPrevX, clientPrevY, clientPrevZ;
-    private double clientCurrX, clientCurrY, clientCurrZ;
-    private float clientPrevYaw, clientPrevPitch;
-    private float clientCurrYaw, clientCurrPitch;
-    private int clientPrevSnapshotTick;
-    private int clientCurrSnapshotTick;
-    private int clientInterpolationTick;
+    private double clientFromX, clientFromY, clientFromZ;
+    private double clientToX, clientToY, clientToZ;
+    private float clientFromYaw, clientFromPitch;
+    private float clientToYaw, clientToPitch;
+    private float clientLerpDurationTicks = 1.0f;
+    private float clientLerpElapsedTicks;
+    // Client ticks since the last correction packet; used to measure the
+    // real arrival interval so the glide duration self-tunes to it.
+    private int clientTicksSinceCorrection;
 
     public ClaySoldierEntity(EntityType<? extends ClaySoldierEntity> type, Level level) {
         super(type, level);
@@ -326,7 +337,9 @@ public class ClaySoldierEntity extends Entity {
             return getYRot();
         }
 
-        return sampleClientYaw(getClientSampleTime(partialTick));
+        float t = clientLerpFraction(partialTick);
+        float yawDelta = Mth.wrapDegrees(clientToYaw - clientFromYaw);
+        return clientFromYaw + yawDelta * t;
     }
 
     /**
@@ -342,37 +355,29 @@ public class ClaySoldierEntity extends Entity {
             return position();
         }
 
-        return sampleClientPosition(getClientSampleTime(partialTick));
-    }
-
-    private float getClientSampleTime(float partialTick) {
-        return clientInterpolationTick + Mth.clamp(partialTick, 0.0f, 1.0f) - CLIENT_INTERPOLATION_DELAY_TICKS;
-    }
-
-    private float getClientSampleLerp(float sampleTime) {
-        int span = Math.max(1, clientCurrSnapshotTick - clientPrevSnapshotTick);
-        float t = (sampleTime - clientPrevSnapshotTick) / (float) span;
-        return Mth.clamp(t, 0.0f, 1.0f);
-    }
-
-    private Vec3 sampleClientPosition(float sampleTime) {
-        float t = getClientSampleLerp(sampleTime);
+        // Single render source, continuous in partialTick: a constant-rate
+        // glide from->to. Vanilla's competing xo->getX lerp is neutralised
+        // each tick in applyClientLinearCorrection (xo pinned to the corrected
+        // position), so the renderer's (getRenderPosition - position) offset
+        // carries all motion cleanly and smoothly at any framerate.
+        float t = clientLerpFraction(partialTick);
         return new Vec3(
-            Mth.lerp(t, clientPrevX, clientCurrX),
-            Mth.lerp(t, clientPrevY, clientCurrY),
-            Mth.lerp(t, clientPrevZ, clientCurrZ)
+            Mth.lerp(t, clientFromX, clientToX),
+            Mth.lerp(t, clientFromY, clientToY),
+            Mth.lerp(t, clientFromZ, clientToZ)
         );
     }
 
-    private float sampleClientYaw(float sampleTime) {
-        float t = getClientSampleLerp(sampleTime);
-        float yawDelta = Mth.wrapDegrees(clientCurrYaw - clientPrevYaw);
-        return clientPrevYaw + yawDelta * t;
-    }
-
-    private float sampleClientPitch(float sampleTime) {
-        float t = getClientSampleLerp(sampleTime);
-        return Mth.lerp(t, clientPrevPitch, clientCurrPitch);
+    /**
+     * Progress [0,1] of the active correction glide, continuous in
+     * partialTick. Driven by elapsed client ticks vs the auto-tuned
+     * duration, so it is immune to packet-arrival jitter: a late packet
+     * simply eases to rest at t=1 (the true server position) until the
+     * next correction restarts the glide.
+     */
+    private float clientLerpFraction(float partialTick) {
+        float elapsed = clientLerpElapsedTicks + Mth.clamp(partialTick, 0.0f, 1.0f);
+        return Mth.clamp(elapsed / clientLerpDurationTicks, 0.0f, 1.0f);
     }
 
     private byte getFlags() {
@@ -487,7 +492,6 @@ public class ClaySoldierEntity extends Entity {
         if (level().isClientSide()) {
             // Client is presentation-only: follow server correction arcs and avoid
             // running parallel local physics that causes snap-back stutter.
-            clientInterpolationTick++;
             applyClientLinearCorrection();
             return;
         }
@@ -534,37 +538,46 @@ public class ClaySoldierEntity extends Entity {
             return;
         }
 
-        int arrivalTick = clientInterpolationTick;
         if (!clientHasCorrectionTarget) {
+            // First snapshot: appear at the server transform, no glide.
             clientHasCorrectionTarget = true;
-            clientPrevX = x;
-            clientPrevY = y;
-            clientPrevZ = z;
-            clientCurrX = x;
-            clientCurrY = y;
-            clientCurrZ = z;
-            clientPrevYaw = (float) yRot;
-            clientPrevPitch = (float) xRot;
-            clientCurrYaw = (float) yRot;
-            clientCurrPitch = (float) xRot;
-            clientPrevSnapshotTick = Math.max(0, arrivalTick - 1);
-            clientCurrSnapshotTick = Math.max(clientPrevSnapshotTick + 1, arrivalTick);
+            clientFromX = clientToX = x;
+            clientFromY = clientToY = y;
+            clientFromZ = clientToZ = z;
+            clientFromYaw = clientToYaw = (float) yRot;
+            clientFromPitch = clientToPitch = (float) xRot;
+            clientLerpDurationTicks = 1.0f;
+            clientLerpElapsedTicks = 1.0f;
+            clientTicksSinceCorrection = 0;
             return;
         }
 
-        clientPrevX = clientCurrX;
-        clientPrevY = clientCurrY;
-        clientPrevZ = clientCurrZ;
-        clientPrevYaw = clientCurrYaw;
-        clientPrevPitch = clientCurrPitch;
-        clientPrevSnapshotTick = clientCurrSnapshotTick;
+        // Restart the glide from wherever we currently are (no jump) toward
+        // the new server target. The duration self-tunes to the *measured*
+        // arrival interval (smoothed), not the server's `steps` (which
+        // overstates the real cadence here): matching duration to the true
+        // interval is what makes the hand-off seamless. An EMA keeps a single
+        // late/dropped packet from swinging the duration into the stutter
+        // regime.
+        clientFromX = getX();
+        clientFromY = getY();
+        clientFromZ = getZ();
+        clientFromYaw = getYRot();
+        clientFromPitch = getXRot();
 
-        clientCurrX = x;
-        clientCurrY = y;
-        clientCurrZ = z;
-        clientCurrYaw = (float) yRot;
-        clientCurrPitch = (float) xRot;
-        clientCurrSnapshotTick = Math.max(clientPrevSnapshotTick + 1, arrivalTick);
+        clientToX = x;
+        clientToY = y;
+        clientToZ = z;
+        clientToYaw = (float) yRot;
+        clientToPitch = (float) xRot;
+
+        float measured = Mth.clamp(
+            Math.max(1, clientTicksSinceCorrection),
+            MIN_INTERP_DURATION_TICKS,
+            MAX_INTERP_DURATION_TICKS);
+        clientTicksSinceCorrection = 0;
+        clientLerpDurationTicks = clientLerpDurationTicks * 0.6f + measured * 0.4f;
+        clientLerpElapsedTicks = 0.0f;
     }
 
     private void applyClientLinearCorrection() {
@@ -572,13 +585,34 @@ public class ClaySoldierEntity extends Entity {
             return;
         }
 
-        float sampleTime = getClientSampleTime(0.0f);
-        Vec3 sampledPos = sampleClientPosition(sampleTime);
-        setPos(sampledPos);
-        setYRot(sampleClientYaw(sampleTime));
-        setXRot(sampleClientPitch(sampleTime));
+        clientTicksSinceCorrection++;
+        clientLerpElapsedTicks += 1.0f;
+        float t = Mth.clamp(clientLerpElapsedTicks / clientLerpDurationTicks, 0.0f, 1.0f);
+
+        setPos(
+            Mth.lerp(t, clientFromX, clientToX),
+            Mth.lerp(t, clientFromY, clientToY),
+            Mth.lerp(t, clientFromZ, clientToZ)
+        );
+        float yawDelta = Mth.wrapDegrees(clientToYaw - clientFromYaw);
+        setYRot(clientFromYaw + yawDelta * t);
+        setXRot(Mth.lerp(t, clientFromPitch, clientToPitch));
         setYHeadRot(getYRot());
         setYBodyRot(getYRot());
+
+        // Pin vanilla's previous-tick render baseline to the corrected
+        // transform. Vanilla renders at lerp(partialTick, xo, getX()); with
+        // xo == getX() that term is constant, so the buffer sampled in
+        // getRenderPosition/getRenderYaw (continuous in partialTick) is the
+        // single, framerate-smooth source of motion instead of two competing.
+        this.xo = getX();
+        this.yo = getY();
+        this.zo = getZ();
+        this.xOld = getX();
+        this.yOld = getY();
+        this.zOld = getZ();
+        this.yRotO = getYRot();
+        this.xRotO = getXRot();
     }
 
     private void serverCombatTick() {
