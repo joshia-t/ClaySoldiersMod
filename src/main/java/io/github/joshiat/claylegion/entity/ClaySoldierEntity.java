@@ -59,7 +59,7 @@ public class ClaySoldierEntity extends Entity {
     private static final EntityDataAccessor<Long> ACTIVE_UPGRADES =
             SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.LONG);
 
-    public static final float MAX_HEALTH = 4.0f;
+    public static final float MAX_HEALTH = 20.0f;
     private static final float ATTACK_DAMAGE = 1.0f;
     private static final double GRAVITY = 0.08;
     private static final double DRAG = 0.98;
@@ -68,7 +68,7 @@ public class ClaySoldierEntity extends Entity {
     private static final int MOUNT_SCAN_INTERVAL = 8;
     private static final double TARGET_RANGE_XZ = 4.0;
     private static final double TARGET_RANGE_Y = 1.8;
-    private static final double TARGET_RANGE_SQ = 8.0 * 8.0;
+    private static final double TARGET_RANGE_SQ = 16.0 * 16.0;
     private static final double MOUNT_SEARCH_RANGE = 8.0;
     private static final double MOUNT_SEARCH_RANGE_SQ = MOUNT_SEARCH_RANGE * MOUNT_SEARCH_RANGE;
     private static final double MOUNT_BOARD_RANGE = 0.8;
@@ -76,7 +76,7 @@ public class ClaySoldierEntity extends Entity {
 
     private static final double ATTACK_RANGE = 0.8;
     private static final double ATTACK_RANGE_SQ = ATTACK_RANGE * ATTACK_RANGE;
-    private static final int ATTACK_COOLDOWN_TICKS = 10;
+    private static final int ATTACK_COOLDOWN_TICKS = 20;
     private static final int RANGED_ATTACK_COOLDOWN_TICKS = 18;
     private static final double RANGED_ATTACK_RANGE = 6.0;
     private static final double RANGED_ATTACK_RANGE_SQ = RANGED_ATTACK_RANGE * RANGED_ATTACK_RANGE;
@@ -84,8 +84,8 @@ public class ClaySoldierEntity extends Entity {
     private static final int ATTACK_SWING_DURATION = 7;
     private static final int HURT_FLASH_DURATION = 8;
 
-    private static final double CHASE_ACCEL = 0.06;
-    private static final double MAX_CHASE_SPEED = 0.18;
+    private static final double CHASE_ACCEL = 0.05;
+    private static final double MAX_CHASE_SPEED = 0.1;
     private static final int JUMP_ASSIST_COOLDOWN_TICKS = 6;
     private static final int SEPARATION_UPDATE_INTERVAL = 4;
     private static final float CLIENT_INTERPOLATION_DELAY_TICKS = 1.0f;
@@ -98,6 +98,10 @@ public class ClaySoldierEntity extends Entity {
     private static final int COMBUSTION_TICK_INTERVAL = 10;
     private static final float COMBUSTION_DAMAGE = 0.25f;
     private static final float EMERALD_RAW_DAMAGE_MULTIPLIER = 1.35f;
+    private static final double DAMAGE_KNOCKBACK_HORIZONTAL = 0.32;
+    private static final double DAMAGE_KNOCKBACK_VERTICAL = 0.25;
+    private static final double DAMAGE_KNOCKBACK_VERTICAL_CAP = 0.5;
+    private static final double DAMAGE_KNOCKBACK_EPSILON = 1.0E-6;
 
     private long activeUpgrades;
     private final UpgradeState upgradeState = new UpgradeState();
@@ -168,6 +172,10 @@ public class ClaySoldierEntity extends Entity {
      * This is the legacy method used for projectiles and non-soldier damage sources.
      */
     public void applySoldierDamage(float amount, byte attackingTeam) {
+        applySoldierDamage(amount, attackingTeam, null);
+    }
+
+    public void applySoldierDamage(float amount, byte attackingTeam, Entity attackerEntity) {
         if (level().isClientSide() || isSoldierDead() || amount <= 0.0f) {
             return;
         }
@@ -177,12 +185,7 @@ public class ClaySoldierEntity extends Entity {
             return;
         }
 
-        float newHealth = getSoldierHealth() - amount;
-        setSoldierHealth(newHealth);
-        setHurtFlashTicks(HURT_FLASH_DURATION);
-        if (newHealth <= 0f && level() instanceof ServerLevel serverLevel) {
-            onSoldierKilled(serverLevel);
-        }
+        applyResolvedDamage(amount, attackerEntity);
     }
 
     /**
@@ -243,12 +246,48 @@ public class ClaySoldierEntity extends Entity {
      * Process direct damage to the soldier (bypasses mount logic).
      */
     private void processDirectDamage(float amount, ClaySoldierEntity attacker) {
+        applyResolvedDamage(amount, attacker);
+    }
+
+    private void applyResolvedDamage(float amount, Entity attackerEntity) {
         float newHealth = getSoldierHealth() - amount;
         setSoldierHealth(newHealth);
         setHurtFlashTicks(HURT_FLASH_DURATION);
+        applyDamageKnockback(attackerEntity);
         if (newHealth <= 0f && level() instanceof ServerLevel serverLevel) {
             onSoldierKilled(serverLevel);
         }
+    }
+
+    private void applyDamageKnockback(Entity attackerEntity) {
+        if (attackerEntity == null || isPassenger()) {
+            return;
+        }
+
+        double dx = getX() - attackerEntity.getX();
+        double dz = getZ() - attackerEntity.getZ();
+        double lenSq = dx * dx + dz * dz;
+
+        if (lenSq < DAMAGE_KNOCKBACK_EPSILON) {
+            dx = (this.random.nextDouble() - 0.5) * 0.02;
+            dz = (this.random.nextDouble() - 0.5) * 0.02;
+            lenSq = dx * dx + dz * dz;
+            if (lenSq < DAMAGE_KNOCKBACK_EPSILON) {
+                return;
+            }
+        }
+
+        double invLen = 1.0 / Math.sqrt(lenSq);
+        dx *= invLen;
+        dz *= invLen;
+
+        Vec3 velocity = getDeltaMovement();
+        double nextY = Math.min(DAMAGE_KNOCKBACK_VERTICAL_CAP, velocity.y + DAMAGE_KNOCKBACK_VERTICAL);
+        setDeltaMovement(
+            velocity.x + dx * DAMAGE_KNOCKBACK_HORIZONTAL,
+            nextY,
+            velocity.z + dz * DAMAGE_KNOCKBACK_HORIZONTAL
+        );
     }
 
     public int getHurtFlashTicks() {
@@ -1034,7 +1073,8 @@ public class ClaySoldierEntity extends Entity {
         if (attacker instanceof Player) {
             resolvedAmount *= CombatTuning.getPlayerDamageMultiplier();
         }
-        applySoldierDamage(resolvedAmount, (byte) -1);
+        Entity knockbackSource = source.getDirectEntity() != null ? source.getDirectEntity() : attacker;
+        applySoldierDamage(resolvedAmount, (byte) -1, knockbackSource);
         return !isSoldierDead();
     }
 
