@@ -7,6 +7,7 @@ import io.github.joshiat.claylegion.config.ClayLegionConfig;
 import io.github.joshiat.claylegion.entity.CombatTuning;
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
 import io.github.joshiat.claylegion.entity.RuntimeTelemetry;
+import io.github.joshiat.claylegion.entity.TargetingProfiler;
 import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
 import io.github.joshiat.claylegion.entity.mount.TurtleMountEntity;
 import io.github.joshiat.claylegion.registry.BlockEntityRegistry;
@@ -88,6 +89,25 @@ public class ClayLegion implements ModInitializer {
 						.executes(ctx -> debugInspect(ctx.getSource())))
 					.then(literal("inspectmount")
 						.executes(ctx -> debugInspectMount(ctx.getSource()))))
+				.then(literal("profiler")
+					.then(literal("enable")
+						.executes(ctx -> {
+							TargetingProfiler.setEnabled(true);
+							ctx.getSource().sendSuccess(() -> Component.literal("TargetingProfiler enabled."), false);
+							return 1;
+						}))
+					.then(literal("disable")
+						.executes(ctx -> {
+							TargetingProfiler.setEnabled(false);
+							ctx.getSource().sendSuccess(() -> Component.literal("TargetingProfiler disabled."), false);
+							return 1;
+						}))
+					.then(literal("report")
+						.executes(ctx -> {
+							TargetingProfiler.printReport();
+							ctx.getSource().sendSuccess(() -> Component.literal("TargetingProfiler report printed to console."), false);
+							return 1;
+						})))
 				.then(literal("config")
 					.then(literal("show")
 						.executes(ctx -> sendCurrentConfig(ctx.getSource())))

@@ -73,6 +73,7 @@ public class ClaySoldierEntity extends Entity {
     private static final int RANGED_ATTACK_COOLDOWN_TICKS = 18;
     private static final double RANGED_ATTACK_RANGE = 6.0;
     private static final double RANGED_ATTACK_RANGE_SQ = RANGED_ATTACK_RANGE * RANGED_ATTACK_RANGE;
+    private static final double RETALIATE_AGGRO_RANGE_SQ = RANGED_ATTACK_RANGE_SQ;
     private static final double PROJECTILE_SPEED = 0.55;
     private static final int ATTACK_SWING_DURATION = 7;
     private static final int HURT_FLASH_DURATION = 8;
@@ -102,6 +103,7 @@ public class ClaySoldierEntity extends Entity {
 
     private ClaySoldierEntity cachedTarget;
     private BaseMountEntity cachedMountTarget;
+    private boolean registeredInSoldierIndex = false;
     private int attackCooldown;
     private int jumpAssistCooldown;
     private double obstructionBaseY;
@@ -341,6 +343,25 @@ public class ClaySoldierEntity extends Entity {
         return cachedTarget;
     }
 
+    public void aggroOnHit(ClaySoldierEntity attacker) {
+        if (attacker == null || attacker == this || attacker.isSoldierDead()) {
+            return;
+        }
+        if (attacker.getTeamId() == getTeamId()) {
+            return;
+        }
+        if (getAiState() != SoldierAiState.IDLE) {
+            return;
+        }
+        if (distanceToSqr(attacker) > RETALIATE_AGGRO_RANGE_SQ) {
+            return;
+        }
+
+        cachedTarget = attacker;
+        cachedMountTarget = null;
+        setAiState(SoldierAiState.CHASING);
+    }
+
     @Override
     public boolean isPickable() {
         // Required so players can ray-hit and attack this non-Living entity.
@@ -513,6 +534,11 @@ public class ClaySoldierEntity extends Entity {
     }
 
     private void serverCombatTick() {
+        if (!registeredInSoldierIndex) {
+            SoldierIndex.get(level()).register(this);
+            registeredInSoldierIndex = true;
+        }
+
         if (isSoldierDead()) {
             return;
         }
@@ -535,14 +561,19 @@ public class ClaySoldierEntity extends Entity {
             cachedSeparation = sampleSeparationForce();
         }
 
-        if (tryAcquireMount()) {
-            return;
+        if (getAiState() == SoldierAiState.IDLE) {
+            cachedTarget = SoldierTargetingHelper.updateTargetCache(this, cachedTarget);
+        } else if (!SoldierTargetingHelper.hasValidTarget(this, cachedTarget)) {
+            cachedTarget = null;
         }
-
-        cachedTarget = SoldierTargetingHelper.updateTargetCache(this, cachedTarget);
 
         if (cachedTarget == null) {
             setAiState(SoldierAiState.IDLE);
+
+            if (tryAcquireMount()) {
+                return;
+            }
+
             applyIdleBraking();
             resetObstructionTracking();
             return;
@@ -652,6 +683,10 @@ public class ClaySoldierEntity extends Entity {
     }
 
     private boolean tryAcquireMount() {
+        if (getAiState() != SoldierAiState.IDLE) {
+            return false;
+        }
+
         if (getVehicle() != null) {
             return false;
         }
@@ -911,6 +946,15 @@ public class ClaySoldierEntity extends Entity {
             this.activeUpgrades = entityData.get(ACTIVE_UPGRADES);
             this.upgradeState.setRaw(this.activeUpgrades);
         }
+    }
+
+    @Override
+    public void remove(Entity.RemovalReason reason) {
+        if (registeredInSoldierIndex && !level().isClientSide()) {
+            SoldierIndex.get(level()).unregister(this);
+            registeredInSoldierIndex = false;
+        }
+        super.remove(reason);
     }
 
     @Override

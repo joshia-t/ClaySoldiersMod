@@ -62,6 +62,10 @@ public abstract class ClayProjectileEntity extends Entity {
         this.shooter = shooter;
     }
 
+    public Entity getShooter() {
+        return shooter;
+    }
+
     public abstract float getDamage();
 
     @Override

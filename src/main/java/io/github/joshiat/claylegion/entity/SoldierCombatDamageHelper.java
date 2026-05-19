@@ -1,6 +1,7 @@
 package io.github.joshiat.claylegion.entity;
 
 import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
+import io.github.joshiat.claylegion.entity.projectile.ClayProjectileEntity;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
@@ -101,11 +102,23 @@ public class SoldierCombatDamageHelper {
         float newHealth = soldier.getSoldierHealth() - amount;
         soldier.setSoldierHealth(newHealth);
         soldier.setHurtFlashTicks(8);  // HURT_FLASH_DURATION
+        soldier.aggroOnHit(resolveAttackingSoldier(attackerEntity));
         applyDamageKnockback(soldier, attackerEntity);
 
         if (newHealth <= 0f && soldier.level() instanceof ServerLevel serverLevel) {
             soldier.onSoldierKilled(serverLevel);
         }
+    }
+
+    private static ClaySoldierEntity resolveAttackingSoldier(Entity attackerEntity) {
+        if (attackerEntity instanceof ClaySoldierEntity attackerSoldier) {
+            return attackerSoldier;
+        }
+        if (attackerEntity instanceof ClayProjectileEntity projectile
+            && projectile.getShooter() instanceof ClaySoldierEntity shooterSoldier) {
+            return shooterSoldier;
+        }
+        return null;
     }
 
     /**
