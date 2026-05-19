@@ -64,13 +64,6 @@ public class ClaySoldierEntity extends Entity {
     private static final double GRAVITY = 0.08;
     private static final double DRAG = 0.98;
 
-    private static final int TARGET_SCAN_INTERVAL = 12;
-    private static final int MOUNT_SCAN_INTERVAL = 8;
-    private static final double TARGET_RANGE_XZ = 4.0;
-    private static final double TARGET_RANGE_Y = 1.8;
-    private static final double TARGET_RANGE_SQ = 16.0 * 16.0;
-    private static final double MOUNT_SEARCH_RANGE = 8.0;
-    private static final double MOUNT_SEARCH_RANGE_SQ = MOUNT_SEARCH_RANGE * MOUNT_SEARCH_RANGE;
     private static final double MOUNT_BOARD_RANGE = 0.8;
     private static final double MOUNT_BOARD_RANGE_SQ = MOUNT_BOARD_RANGE * MOUNT_BOARD_RANGE;
 
@@ -103,10 +96,6 @@ public class ClaySoldierEntity extends Entity {
     private static final int COMBUSTION_TICK_INTERVAL = 10;
     private static final float COMBUSTION_DAMAGE = 0.25f;
     private static final float EMERALD_RAW_DAMAGE_MULTIPLIER = 1.35f;
-    private static final double DAMAGE_KNOCKBACK_HORIZONTAL = 0.32;
-    private static final double DAMAGE_KNOCKBACK_VERTICAL = 0.25;
-    private static final double DAMAGE_KNOCKBACK_VERTICAL_CAP = 0.5;
-    private static final double DAMAGE_KNOCKBACK_EPSILON = 1.0E-6;
 
     private long activeUpgrades;
     private final UpgradeState upgradeState = new UpgradeState();
@@ -183,20 +172,11 @@ public class ClaySoldierEntity extends Entity {
      * This is the legacy method used for projectiles and non-soldier damage sources.
      */
     public void applySoldierDamage(float amount, byte attackingTeam) {
-        applySoldierDamage(amount, attackingTeam, null);
+        SoldierCombatDamageHelper.applySoldierDamage(this, amount, attackingTeam, null);
     }
 
     public void applySoldierDamage(float amount, byte attackingTeam, Entity attackerEntity) {
-        if (level().isClientSide() || isSoldierDead() || amount <= 0.0f) {
-            return;
-        }
-
-        // Friendly-fire suppression for direct soldier-vs-soldier damage calls.
-        if (attackingTeam >= 0 && attackingTeam == (byte) getTeamId()) {
-            return;
-        }
-
-        applyResolvedDamage(amount, attackerEntity);
+        SoldierCombatDamageHelper.applySoldierDamage(this, amount, attackingTeam, attackerEntity);
     }
 
     /**
@@ -210,102 +190,19 @@ public class ClaySoldierEntity extends Entity {
      *  - Mounted vs Mounted: 50/50 split between rider and mount
      */
     public void applyCombatDamage(float rawDamage, ClaySoldierEntity attacker) {
-        applyCombatDamage(rawDamage, attacker, -1.0f, 1.0f);
+        SoldierCombatDamageHelper.applyCombatDamage(this, rawDamage, attacker);
     }
 
     public void applyCombatDamage(float rawDamage, ClaySoldierEntity attacker,
                                   float riderHitChanceOverride, float rawDamageMultiplier) {
-        if (level().isClientSide() || isSoldierDead() || rawDamage <= 0.0f) {
-            return;
-        }
-
-        // Friendly-fire suppression
-        if (attacker != null && attacker.getTeamId() == getTeamId()) {
-            return;
-        }
-
-        boolean attackerMounted = attacker != null && attacker.getVehicle() != null;
-        boolean targetMounted = this.getVehicle() != null;
-        float resolvedDamage = rawDamage * Math.max(0.0f, rawDamageMultiplier);
-
-        if (!targetMounted) {
-            // Target is infantry: take full damage
-            processDirectDamage(resolvedDamage, attacker);
-            return;
-        }
-
-        // Target is mounted: resolve via chance-based rider/mount roll.
-        float roll = this.random.nextFloat();
-        float riderHitChance = attackerMounted ? 0.50f : 0.20f;
-        if (riderHitChanceOverride >= 0.0f) {
-            riderHitChance = Mth.clamp(riderHitChanceOverride, 0.0f, 1.0f);
-        }
-
-        Entity mount = this.getVehicle();
-        if (roll < riderHitChance) {
-            // Damage bypasses mount and hits the rider directly.
-            processDirectDamage(resolvedDamage, attacker);
-        } else {
-            // Delegate damage to the mount.
-            if (mount instanceof io.github.joshiat.claylegion.entity.mount.BaseMountEntity legacyMount) {
-                legacyMount.applyMountDamage(resolvedDamage, attacker);
-            }
-        }
-    }
-
-    /**
-     * Process direct damage to the soldier (bypasses mount logic).
-     */
-    private void processDirectDamage(float amount, ClaySoldierEntity attacker) {
-        applyResolvedDamage(amount, attacker);
-    }
-
-    private void applyResolvedDamage(float amount, Entity attackerEntity) {
-        float newHealth = getSoldierHealth() - amount;
-        setSoldierHealth(newHealth);
-        setHurtFlashTicks(HURT_FLASH_DURATION);
-        applyDamageKnockback(attackerEntity);
-        if (newHealth <= 0f && level() instanceof ServerLevel serverLevel) {
-            onSoldierKilled(serverLevel);
-        }
-    }
-
-    private void applyDamageKnockback(Entity attackerEntity) {
-        if (attackerEntity == null || isPassenger()) {
-            return;
-        }
-
-        double dx = getX() - attackerEntity.getX();
-        double dz = getZ() - attackerEntity.getZ();
-        double lenSq = dx * dx + dz * dz;
-
-        if (lenSq < DAMAGE_KNOCKBACK_EPSILON) {
-            dx = (this.random.nextDouble() - 0.5) * 0.02;
-            dz = (this.random.nextDouble() - 0.5) * 0.02;
-            lenSq = dx * dx + dz * dz;
-            if (lenSq < DAMAGE_KNOCKBACK_EPSILON) {
-                return;
-            }
-        }
-
-        double invLen = 1.0 / Math.sqrt(lenSq);
-        dx *= invLen;
-        dz *= invLen;
-
-        Vec3 velocity = getDeltaMovement();
-        double nextY = Math.min(DAMAGE_KNOCKBACK_VERTICAL_CAP, velocity.y + DAMAGE_KNOCKBACK_VERTICAL);
-        setDeltaMovement(
-            velocity.x + dx * DAMAGE_KNOCKBACK_HORIZONTAL,
-            nextY,
-            velocity.z + dz * DAMAGE_KNOCKBACK_HORIZONTAL
-        );
+        SoldierCombatDamageHelper.applyCombatDamage(this, rawDamage, attacker, riderHitChanceOverride, rawDamageMultiplier);
     }
 
     public int getHurtFlashTicks() {
         return entityData.get(HURT_FLASH_TICKS);
     }
 
-    private void setHurtFlashTicks(int ticks) {
+    public void setHurtFlashTicks(int ticks) {
         entityData.set(HURT_FLASH_TICKS, (byte) Math.max(0, Math.min(127, ticks)));
     }
 
@@ -642,7 +539,7 @@ public class ClaySoldierEntity extends Entity {
             return;
         }
 
-        updateTargetCache();
+        cachedTarget = SoldierTargetingHelper.updateTargetCache(this, cachedTarget);
 
         if (cachedTarget == null) {
             setAiState(SoldierAiState.IDLE);
@@ -764,7 +661,7 @@ public class ClaySoldierEntity extends Entity {
             return false;
         }
 
-        updateMountTargetCache();
+        cachedMountTarget = SoldierTargetingHelper.updateMountTargetCache(this, cachedMountTarget);
         if (cachedMountTarget == null) {
             return false;
         }
@@ -957,93 +854,9 @@ public class ClaySoldierEntity extends Entity {
         }
     }
 
-    private void updateTargetCache() {
-        if (isValidTarget(cachedTarget)) {
-            return;
-        }
 
-        cachedTarget = null;
-        if (!shouldScanForTarget()) {
-            return;
-        }
 
-        AABB scanBox = getBoundingBox().inflate(TARGET_RANGE_XZ, TARGET_RANGE_Y, TARGET_RANGE_XZ);
-        List<ClaySoldierEntity> candidates = level().getEntitiesOfClass(
-                ClaySoldierEntity.class,
-                scanBox,
-                this::isValidTarget
-        );
-
-        double bestDistSq = Double.MAX_VALUE;
-        ClaySoldierEntity best = null;
-        for (ClaySoldierEntity candidate : candidates) {
-            double distSq = distanceToSqr(candidate);
-            if (distSq < bestDistSq) {
-                bestDistSq = distSq;
-                best = candidate;
-            }
-        }
-        cachedTarget = best;
-    }
-
-    private void updateMountTargetCache() {
-        if (isValidMountTarget(cachedMountTarget)) {
-            return;
-        }
-
-        cachedMountTarget = null;
-        if (!shouldScanForMount()) {
-            return;
-        }
-
-        AABB scanBox = getBoundingBox().inflate(MOUNT_SEARCH_RANGE, 1.2, MOUNT_SEARCH_RANGE);
-        List<BaseMountEntity> candidates = level().getEntitiesOfClass(
-            BaseMountEntity.class,
-            scanBox,
-            this::isValidMountTarget
-        );
-
-        double bestDistSq = Double.MAX_VALUE;
-        BaseMountEntity best = null;
-        for (BaseMountEntity candidate : candidates) {
-            double distSq = distanceToSqr(candidate);
-            if (distSq < bestDistSq) {
-                bestDistSq = distSq;
-                best = candidate;
-            }
-        }
-        cachedMountTarget = best;
-    }
-
-    private boolean shouldScanForMount() {
-        long gameTime = level().getGameTime();
-        return ((gameTime + getId()) % MOUNT_SCAN_INTERVAL) == 0;
-    }
-
-    private boolean isValidMountTarget(BaseMountEntity candidate) {
-        return candidate != null
-            && candidate.isAlive()
-            && !candidate.isRemoved()
-            && candidate.getMaxPassengers() > candidate.getPassengers().size()
-            && distanceToSqr(candidate) <= MOUNT_SEARCH_RANGE_SQ;
-    }
-
-    private boolean shouldScanForTarget() {
-        long gameTime = level().getGameTime();
-        return ((gameTime + getId()) % TARGET_SCAN_INTERVAL) == 0;
-    }
-
-    private boolean isValidTarget(ClaySoldierEntity candidate) {
-        return candidate != null
-                && candidate != this
-                && candidate.isAlive()
-                && !candidate.isRemoved()
-                && !candidate.isSoldierDead()
-                && candidate.getTeamId() != getTeamId()
-                && distanceToSqr(candidate) <= TARGET_RANGE_SQ;
-    }
-
-    private void onSoldierKilled(ServerLevel serverLevel) {
+    void onSoldierKilled(ServerLevel serverLevel) {
         if (isNexusSummon()) {
             discard();
             return;
