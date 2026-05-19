@@ -7,8 +7,8 @@ import os
 # proper 3D depth via vertex colour multiplication.
 #
 # UV layout for texOffs(u,v) box (w,h,d):
-#   Bottom : (u,          v)       .. (u+d,         v+d)
-#   Top    : (u+d+w,      v)       .. (u+d+w+d,     v+d)
+#   Down   : (u,          v)       .. (u+d,         v+d)
+#   Up     : (u+d,        v)       .. (u+d+w,       v+d)    ← adjacent to Down, not after w gap
 #   Left   : (u,          v+d)     .. (u+d,         v+d+h)
 #   Front  : (u+d,        v+d)     .. (u+d+w,       v+d+h)
 #   Right  : (u+d+w,      v+d)     .. (u+d+w+d,     v+d+h)
@@ -35,8 +35,8 @@ def tint(c, factor):
 
 
 def paint_box(img, u, v, w, h, d, shade=1.0):
-    fill(img, u,           v,     u+d,           v+d,   tint(BOTTOM, shade))  # bottom
-    fill(img, u+d+w,       v,     u+d+w+d,       v+d,   tint(LIGHT,  shade))  # top
+    fill(img, u,           v,     u+d,           v+d,   tint(BOTTOM, shade))  # down
+    fill(img, u+d,         v,     u+d+w,         v+d,   tint(LIGHT,  shade))  # up
     fill(img, u,           v+d,   u+d,           v+d+h, tint(SIDE,   shade))  # left
     fill(img, u+d,         v+d,   u+d+w,         v+d+h, tint(BRIGHT, shade))  # front
     fill(img, u+d+w,       v+d,   u+d+w+d,       v+d+h, tint(SIDE,   shade))  # right
@@ -77,12 +77,12 @@ MOUNT_BOTTOM = (145, 122, 99, 255)
 
 
 def paint_box_custom(img, u, v, w, h, d, bright, light, side, dark, bottom, shade=1.0):
-    fill(img, u,           v,     u+d,           v+d,   tint(bottom, shade))
-    fill(img, u+d+w,       v,     u+d+w+d,       v+d,   tint(light,  shade))
-    fill(img, u,           v+d,   u+d,           v+d+h, tint(side,   shade))
-    fill(img, u+d,         v+d,   u+d+w,         v+d+h, tint(bright, shade))
-    fill(img, u+d+w,       v+d,   u+d+w+d,       v+d+h, tint(side,   shade))
-    fill(img, u+d+w+d,     v+d,   u+d+w+d+w,     v+d+h, tint(dark,   shade))
+    fill(img, u,           v,     u+d,           v+d,   tint(bottom, shade))  # down
+    fill(img, u+d,         v,     u+d+w,         v+d,   tint(light,  shade))  # up
+    fill(img, u,           v+d,   u+d,           v+d+h, tint(side,   shade))  # left
+    fill(img, u+d,         v+d,   u+d+w,         v+d+h, tint(bright, shade))  # front
+    fill(img, u+d+w,       v+d,   u+d+w+d,       v+d+h, tint(side,   shade))  # right
+    fill(img, u+d+w+d,     v+d,   u+d+w+d+w,     v+d+h, tint(dark,   shade))  # back
 
 
 mount_img = Image.new('RGBA', (64, 64), EMPTY)
