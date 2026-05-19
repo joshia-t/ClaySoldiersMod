@@ -1,6 +1,6 @@
 {
   "parent": "minecraft:item/generated",
   "textures": {
-    "layer0": "clay-legion:item/soldier_doll"
+    "layer0": "clay-legion:item/pegasus_doll"
   }
 }

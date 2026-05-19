@@ -10,6 +10,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 
 public class ClayLegionClient implements ClientModInitializer {
 	@Override
+	@SuppressWarnings("deprecation")
 	public void onInitializeClient() {
 		ModEntityModelLayers.registerModelLayers();
 		EntityRendererRegistry.register(EntityRegistry.CLAY_SOLDIER, ClaySoldierEntityRenderer::new);
