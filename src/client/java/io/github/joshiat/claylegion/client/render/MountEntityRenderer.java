@@ -52,6 +52,7 @@ public class MountEntityRenderer extends EntityRenderer<BaseMountEntity, MountEn
         poseStack.pushPose();
         poseStack.mulPose(Axis.YP.rotationDegrees(-state.renderYaw));
 
+        model.setupAnim(state);
         RenderType renderType = model.renderType(TEXTURE);
         collector.submitModel(
             model,
