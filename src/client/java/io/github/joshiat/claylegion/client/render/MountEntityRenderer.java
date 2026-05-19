@@ -17,8 +17,22 @@ import net.minecraft.world.phys.Vec3;
  */
 public class MountEntityRenderer extends EntityRenderer<BaseMountEntity, MountEntityRenderState> {
 
+    // Flat fully-opaque white texture: every UV samples white, so geometry can
+    // be iterated without a UV-matched texture. Per-type solid colour is applied
+    // as a vertex tint below so silhouettes stay readable.
     private static final Identifier TEXTURE =
-        Identifier.fromNamespaceAndPath("clay-legion", "textures/entity/clay_mount.png");
+        Identifier.fromNamespaceAndPath("clay-legion", "textures/entity/clay_mount_flat.png");
+
+    private static int tintFor(int mountType) {
+        return switch (mountType) {
+            case 1 -> 0xFF8B5A2B; // horse  - brown
+            case 2 -> 0xFFB0C4DE; // pegasus- light steel
+            case 3 -> 0xFF3E8E3E; // turtle - green
+            case 4 -> 0xFFD2B48C; // bunny  - tan
+            case 5 -> 0xFF6B8E23; // gecko  - olive
+            default -> 0xFFFF00FF; // unknown - magenta
+        };
+    }
 
     private final MountEntityModel model;
 
@@ -60,7 +74,7 @@ public class MountEntityRenderer extends EntityRenderer<BaseMountEntity, MountEn
             renderType,
             state.lightCoords,
             OverlayTexture.NO_OVERLAY,
-            0xFFFFFFFF,
+            tintFor(state.mountType),
             null,
             state.outlineColor,
             null
