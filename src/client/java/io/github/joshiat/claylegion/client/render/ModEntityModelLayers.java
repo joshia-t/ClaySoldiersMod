@@ -14,9 +14,14 @@ public final class ModEntityModelLayers {
             Identifier.fromNamespaceAndPath("clay-legion", "clay_mount"), "main"
     );
 
+    public static final ModelLayerLocation CLAY_HORSE = new ModelLayerLocation(
+            Identifier.fromNamespaceAndPath("clay-legion", "clay_horse"), "main"
+    );
+
     public static void registerModelLayers() {
         ModelLayerRegistry.registerModelLayer(CLAY_SOLDIER, ClaySoldierEntityModel::getTexturedModelData);
         ModelLayerRegistry.registerModelLayer(CLAY_MOUNT, MountEntityModel::getTexturedModelData);
+        ModelLayerRegistry.registerModelLayer(CLAY_HORSE, HorseMountModel::getTexturedModelData);
     }
 
     private ModEntityModelLayers() {}
