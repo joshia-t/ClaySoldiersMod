@@ -83,6 +83,16 @@ public class ClaySoldierEntity extends Entity {
     private static final double PROJECTILE_SPEED = 0.55;
     private static final int ATTACK_SWING_DURATION = 7;
     private static final int HURT_FLASH_DURATION = 8;
+    private static final int TARGET_MEMORY_DURATION_TICKS = 90;
+    private static final int TARGET_LOS_FRESHNESS_TICKS = 6;
+    private static final int ACTIVE_LOS_CHECK_INTERVAL = 4;
+    private static final int IDLE_LOS_CHECK_INTERVAL = 10;
+    private static final int SHOUT_BROADCAST_INTERVAL = 12;
+    private static final float GOSSIP_MIN_CHASE_STRENGTH = 0.18f;
+    private static final int IMMEDIATE_THREAT_CHECK_INTERVAL = 2;
+    private static final double IMMEDIATE_THREAT_RANGE = 2.0;
+    private static final double GOSSIP_MAX_RANGE_BLOCKS = 16.0 * 10.0;
+    private static final double TARGET_MEMORY_REACHED_SQ = 1.2 * 1.2;
 
     private static final double CHASE_ACCEL = 0.05;
     private static final double MAX_CHASE_SPEED = 0.1;
@@ -121,6 +131,13 @@ public class ClaySoldierEntity extends Entity {
     private int combustionTicks;
     private int combustionDamageCooldown;
     private short stickUsesRemaining;
+    private double targetMemoryX;
+    private double targetMemoryY;
+    private double targetMemoryZ;
+    private float targetMemoryConfidence;
+    private long targetMemoryExpiryTick = Long.MIN_VALUE;
+    private long lastDirectSightTick = Long.MIN_VALUE;
+    private long lastShoutTick = Long.MIN_VALUE;
     private Vec3 cachedSeparation = Vec3.ZERO;
     private UUID nexusOriginId;
 
@@ -343,6 +360,10 @@ public class ClaySoldierEntity extends Entity {
         return this.hasUpgrade(UpgradeFlags.STICK) ? Short.toUnsignedInt(stickUsesRemaining) : 0;
     }
 
+    public float getTargetMemoryConfidence() {
+        return targetMemoryConfidence;
+    }
+
     public boolean hasUpgrade(long flag) {
         return (activeUpgrades & flag) == flag;
     }
@@ -430,6 +451,178 @@ public class ClaySoldierEntity extends Entity {
         return cachedTarget;
     }
 
+    public void noteEnemySighting(ClaySoldierEntity enemy, double x, double y, double z,
+                                  float confidence, long gameTime, boolean allowRetarget) {
+        if (confidence <= 0.0f) {
+            return;
+        }
+
+        updateTargetMemory(x, y, z, confidence, gameTime);
+
+        if (enemy == null || enemy == this || enemy.isSoldierDead() || enemy.getTeamId() == getTeamId()) {
+            return;
+        }
+
+        if (!SoldierTargetingHelper.hasValidTarget(this, enemy)) {
+            return;
+        }
+
+        if (cachedTarget == null) {
+            cachedTarget = enemy;
+            cachedMountTarget = null;
+            if (getAiState() == SoldierAiState.IDLE) {
+                setAiState(SoldierAiState.CHASING);
+            }
+            return;
+        }
+
+        if (!allowRetarget) {
+            return;
+        }
+
+        if (getAiState() == SoldierAiState.IDLE && !hasRecentLineOfSight(gameTime)) {
+            cachedTarget = enemy;
+            cachedMountTarget = null;
+            setAiState(SoldierAiState.CHASING);
+        }
+    }
+
+    private void updateTargetMemory(double x, double y, double z, float confidence, long gameTime) {
+        float clamped = Mth.clamp(confidence, 0.0f, 1.0f);
+        if (targetMemoryConfidence <= 1.0E-6f) {
+            targetMemoryX = x;
+            targetMemoryY = y;
+            targetMemoryZ = z;
+        } else {
+            float mix = Math.max(0.15f, clamped);
+            targetMemoryX = targetMemoryX + (x - targetMemoryX) * mix;
+            targetMemoryY = targetMemoryY + (y - targetMemoryY) * mix;
+            targetMemoryZ = targetMemoryZ + (z - targetMemoryZ) * mix;
+        }
+
+        targetMemoryConfidence = Math.max(targetMemoryConfidence, clamped);
+        targetMemoryExpiryTick = gameTime + TARGET_MEMORY_DURATION_TICKS;
+    }
+
+    private void clearTargetMemory() {
+        targetMemoryConfidence = 0.0f;
+        targetMemoryExpiryTick = Long.MIN_VALUE;
+    }
+
+    private boolean hasTargetMemory(long gameTime) {
+        return targetMemoryConfidence > 0.01f && gameTime <= targetMemoryExpiryTick;
+    }
+
+    private boolean hasRecentLineOfSight(long gameTime) {
+        return lastDirectSightTick != Long.MIN_VALUE && (gameTime - lastDirectSightTick) <= TARGET_LOS_FRESHNESS_TICKS;
+    }
+
+    private boolean shouldCheckLineOfSight(long gameTime) {
+        int interval = getAiState() == SoldierAiState.IDLE ? IDLE_LOS_CHECK_INTERVAL : ACTIVE_LOS_CHECK_INTERVAL;
+        return Math.floorMod(gameTime + getId(), interval) == 0;
+    }
+
+    private void onEnemyDirectlySeen(ClaySoldierEntity enemy, long gameTime) {
+        lastDirectSightTick = gameTime;
+        noteEnemySighting(enemy, enemy.getX(), enemy.getY(), enemy.getZ(), 1.0f, gameTime, true);
+        TeamGossipIndex.get(level()).reportEnemySighting(
+            getTeamId(),
+            enemy.getTeamId(),
+            enemy.getX(),
+            enemy.getY(),
+            enemy.getZ(),
+            1.0f,
+            gameTime
+        );
+
+        if (gameTime - lastShoutTick >= SHOUT_BROADCAST_INTERVAL) {
+            SoldierTargetingHelper.relayEnemySighting(this, enemy, gameTime);
+            lastShoutTick = gameTime;
+        }
+    }
+
+    private boolean chaseTargetMemory(long gameTime) {
+        boolean profiling = TargetingProfiler.isEnabled();
+        long start = profiling ? System.nanoTime() : 0L;
+        if (!hasTargetMemory(gameTime)) {
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("memoryChaseTime", "memoryChaseCalls", System.nanoTime() - start, gameTime);
+            }
+            return false;
+        }
+
+        Vec3 memoryPos = new Vec3(targetMemoryX, targetMemoryY, targetMemoryZ);
+        double distSq = position().distanceToSqr(memoryPos);
+        if (distSq <= TARGET_MEMORY_REACHED_SQ) {
+            targetMemoryConfidence *= 0.6f;
+            if (targetMemoryConfidence < 0.05f) {
+                clearTargetMemory();
+            }
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("memoryChaseTime", "memoryChaseCalls", System.nanoTime() - start, gameTime);
+            }
+            return false;
+        }
+
+        chasePosition(memoryPos);
+        if (profiling) {
+            TargetingProfiler.recordCombatSample("memoryChaseTime", "memoryChaseCalls", System.nanoTime() - start, gameTime);
+        }
+        return true;
+    }
+
+    private boolean tryAcquireImmediateThreat(long gameTime) {
+        boolean profiling = TargetingProfiler.isEnabled();
+        long start = profiling ? System.nanoTime() : 0L;
+        if (Math.floorMod(gameTime + getId(), IMMEDIATE_THREAT_CHECK_INTERVAL) != 0) {
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("immediateThreatTime", "immediateThreatChecks", System.nanoTime() - start, gameTime);
+            }
+            return false;
+        }
+
+        double rangeSq = IMMEDIATE_THREAT_RANGE * IMMEDIATE_THREAT_RANGE;
+        AABB nearbyBox = getBoundingBox().inflate(IMMEDIATE_THREAT_RANGE, 1.25, IMMEDIATE_THREAT_RANGE);
+        List<ClaySoldierEntity> nearbyEnemies = level().getEntitiesOfClass(
+            ClaySoldierEntity.class,
+            nearbyBox,
+            candidate -> candidate != this
+                && candidate.isAlive()
+                && !candidate.isRemoved()
+                && !candidate.isSoldierDead()
+                && candidate.getTeamId() != getTeamId()
+        );
+
+        ClaySoldierEntity best = null;
+        double bestSq = rangeSq;
+        for (int i = 0, size = nearbyEnemies.size(); i < size; i++) {
+            ClaySoldierEntity candidate = nearbyEnemies.get(i);
+            double distSq = distanceToSqr(candidate);
+            if (distSq > bestSq) {
+                continue;
+            }
+            if (!SoldierTargetingHelper.hasLineOfSight(this, candidate)) {
+                continue;
+            }
+
+            best = candidate;
+            bestSq = distSq;
+        }
+
+        if (best == null) {
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("immediateThreatTime", "immediateThreatChecks", System.nanoTime() - start, gameTime);
+            }
+            return false;
+        }
+
+        noteEnemySighting(best, best.getX(), best.getY(), best.getZ(), 1.0f, gameTime, true);
+        if (profiling) {
+            TargetingProfiler.recordCombatSample("immediateThreatTime", "immediateThreatChecks", System.nanoTime() - start, gameTime);
+        }
+        return true;
+    }
+
     public void aggroOnHit(ClaySoldierEntity attacker) {
         if (attacker == null || attacker == this || attacker.isSoldierDead()) {
             return;
@@ -444,9 +637,7 @@ public class ClaySoldierEntity extends Entity {
             return;
         }
 
-        cachedTarget = attacker;
-        cachedMountTarget = null;
-        setAiState(SoldierAiState.CHASING);
+        noteEnemySighting(attacker, attacker.getX(), attacker.getY(), attacker.getZ(), 1.0f, level().getGameTime(), true);
     }
 
     @Override
@@ -630,6 +821,52 @@ public class ClaySoldierEntity extends Entity {
         this.xRotO = getXRot();
     }
 
+    private boolean updateAwarenessAndTarget(long gameTime) {
+        tryAcquireImmediateThreat(gameTime);
+
+        if (!SoldierTargetingHelper.hasValidTarget(this, cachedTarget)) {
+            cachedTarget = null;
+        }
+
+        if (cachedTarget == null) {
+            cachedTarget = SoldierTargetingHelper.updateTargetCache(this, null);
+            if (cachedTarget != null) {
+                onEnemyDirectlySeen(cachedTarget, gameTime);
+                return true;
+            }
+            return false;
+        }
+
+        if (shouldCheckLineOfSight(gameTime)) {
+            boolean profiling = TargetingProfiler.isEnabled();
+            long losStart = profiling ? System.nanoTime() : 0L;
+            if (SoldierTargetingHelper.hasLineOfSight(this, cachedTarget)) {
+                onEnemyDirectlySeen(cachedTarget, gameTime);
+                if (profiling) {
+                    TargetingProfiler.recordCombatSample("lineOfSightTime", "lineOfSightChecks", System.nanoTime() - losStart, gameTime);
+                }
+                return true;
+            }
+
+            if (!hasRecentLineOfSight(gameTime)) {
+                ClaySoldierEntity reacquired = SoldierTargetingHelper.updateTargetCache(this, null);
+                if (reacquired != null && reacquired != cachedTarget) {
+                    cachedTarget = reacquired;
+                    onEnemyDirectlySeen(cachedTarget, gameTime);
+                    if (profiling) {
+                        TargetingProfiler.recordCombatSample("lineOfSightTime", "lineOfSightChecks", System.nanoTime() - losStart, gameTime);
+                    }
+                    return true;
+                }
+            }
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("lineOfSightTime", "lineOfSightChecks", System.nanoTime() - losStart, gameTime);
+            }
+        }
+
+        return hasRecentLineOfSight(gameTime);
+    }
+
     private void serverCombatTick() {
         if (!registeredInSoldierIndex) {
             SoldierIndex.get(level()).register(this);
@@ -691,23 +928,51 @@ public class ClaySoldierEntity extends Entity {
                 }
             }
 
+            boolean targetVisible = false;
             if (profiling) {
                 long targetSelectStart = System.nanoTime();
-                if (getAiState() == SoldierAiState.IDLE) {
-                    cachedTarget = SoldierTargetingHelper.updateTargetCache(this, cachedTarget);
-                } else if (!SoldierTargetingHelper.hasValidTarget(this, cachedTarget)) {
-                    cachedTarget = null;
-                }
+                targetVisible = updateAwarenessAndTarget(gameTime);
                 TargetingProfiler.recordCombatSample("targetSelectionTime", "targetSelections", System.nanoTime() - targetSelectStart, gameTime);
             } else {
-                if (getAiState() == SoldierAiState.IDLE) {
-                    cachedTarget = SoldierTargetingHelper.updateTargetCache(this, cachedTarget);
-                } else if (!SoldierTargetingHelper.hasValidTarget(this, cachedTarget)) {
-                    cachedTarget = null;
-                }
+                targetVisible = updateAwarenessAndTarget(gameTime);
             }
 
             if (cachedTarget == null) {
+                if (chaseTargetMemory(gameTime)) {
+                    setAiState(SoldierAiState.CHASING);
+                    return;
+                }
+
+                TeamGossipIndex.GossipHint hint;
+                if (profiling) {
+                    long gossipStart = System.nanoTime();
+                    hint = TeamGossipIndex.get(level()).getStrongestEnemyHint(
+                        getTeamId(),
+                        getX(),
+                        getY(),
+                        getZ(),
+                        GOSSIP_MAX_RANGE_BLOCKS * GOSSIP_MAX_RANGE_BLOCKS,
+                        gameTime
+                    );
+                    TargetingProfiler.recordCombatSample("gossipHintTime", "gossipHintQueries", System.nanoTime() - gossipStart, gameTime);
+                } else {
+                    hint = TeamGossipIndex.get(level()).getStrongestEnemyHint(
+                        getTeamId(),
+                        getX(),
+                        getY(),
+                        getZ(),
+                        GOSSIP_MAX_RANGE_BLOCKS * GOSSIP_MAX_RANGE_BLOCKS,
+                        gameTime
+                    );
+                }
+                if (hint != null && hint.strength >= GOSSIP_MIN_CHASE_STRENGTH) {
+                    noteEnemySighting(null, hint.x, hint.y, hint.z, Math.min(0.45f, hint.strength / 8.0f), gameTime, false);
+                    if (chaseTargetMemory(gameTime)) {
+                        setAiState(SoldierAiState.CHASING);
+                        return;
+                    }
+                }
+
                 setAiState(SoldierAiState.IDLE);
 
                 boolean acquiredMount;
@@ -730,6 +995,15 @@ public class ClaySoldierEntity extends Entity {
                     applyIdleBraking();
                 }
                 resetObstructionTracking();
+                return;
+            }
+
+            if (!targetVisible) {
+                setAiState(SoldierAiState.CHASING);
+                if (!chaseTargetMemory(gameTime)) {
+                    cachedTarget = null;
+                    applyIdleBraking();
+                }
                 return;
             }
 
@@ -950,8 +1224,8 @@ public class ClaySoldierEntity extends Entity {
         }
     }
 
-    private void chaseTarget(ClaySoldierEntity target) {
-        Vec3 to = target.position().subtract(position());
+    private void chasePosition(Vec3 targetPos) {
+        Vec3 to = targetPos.subtract(position());
         Vec3 horizontal = new Vec3(to.x, 0.0, to.z);
         double lenSq = horizontal.lengthSqr();
         if (lenSq < 1.0E-6) {
@@ -978,14 +1252,12 @@ public class ClaySoldierEntity extends Entity {
             }
             obstructionTicks++;
 
-            // Bound repeated hops so soldiers cannot scale tall cliffs.
             double climbedHeight = getY() - obstructionBaseY;
             if (jumpAssistCooldown <= 0 && climbedHeight < CombatTuning.getMaxObstacleClimbHeight()) {
                 setDeltaMovement(getDeltaMovement().x, CombatTuning.getJumpAssistVelocity(), getDeltaMovement().z);
                 jumpAssistCooldown = JUMP_ASSIST_COOLDOWN_TICKS;
             }
 
-            // Lightweight obstacle avoidance: strafe around blocked faces to reduce wall-sticking.
             double dirSign = (((level().getGameTime() + getId()) / 10L) & 1L) == 0L ? 1.0 : -1.0;
             Vec3 strafe = new Vec3(-dir.z * CombatTuning.getObstacleStrafeStrength() * dirSign, 0.0,
                     dir.x * CombatTuning.getObstacleStrafeStrength() * dirSign);
@@ -994,7 +1266,25 @@ public class ClaySoldierEntity extends Entity {
             resetObstructionTracking();
         }
 
-        faceMovementOrTarget(target);
+        Vec3 move = getDeltaMovement();
+        double moveSq = move.x * move.x + move.z * move.z;
+        if (moveSq > 1.0E-6) {
+            float yaw = (float) (Math.atan2(move.z, move.x) * (180.0 / Math.PI)) - 90.0f;
+            setYRot(yaw);
+            setYHeadRot(yaw);
+            setYBodyRot(yaw);
+        } else {
+            double dx = targetPos.x - getX();
+            double dz = targetPos.z - getZ();
+            float yaw = (float) (Math.atan2(dz, dx) * (180.0 / Math.PI)) - 90.0f;
+            setYRot(yaw);
+            setYHeadRot(yaw);
+            setYBodyRot(yaw);
+        }
+    }
+
+    private void chaseTarget(ClaySoldierEntity target) {
+        chasePosition(target.position());
     }
 
     private void applyIdleBraking() {

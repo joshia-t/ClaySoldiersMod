@@ -227,6 +227,7 @@ public class ClayLegion implements ModInitializer {
 			+ Long.toHexString(soldier.getActiveUpgrades()).toUpperCase(Locale.ROOT)
 			+ ", stick=" + soldier.hasUpgrade(UpgradeFlags.STICK)
 			+ ", stickUses=" + soldier.getStickUsesRemaining()
+			+ ", memory=" + String.format(Locale.ROOT, "%.2f", soldier.getTargetMemoryConfidence())
 			+ ", health=" + String.format(Locale.ROOT, "%.2f", soldier.getSoldierHealth())
 			+ ", combatState=" + soldier.getAiState().name()
 			+ ", " + RuntimeTelemetry.snapshot();

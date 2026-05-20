@@ -57,6 +57,10 @@ public class TargetingProfiler {
         metrics.put("rangedDecisionTime", new AtomicLong(0));
         metrics.put("meleeEngagementTime", new AtomicLong(0));
         metrics.put("chaseTargetTime", new AtomicLong(0));
+        metrics.put("immediateThreatTime", new AtomicLong(0));
+        metrics.put("lineOfSightTime", new AtomicLong(0));
+        metrics.put("memoryChaseTime", new AtomicLong(0));
+        metrics.put("gossipHintTime", new AtomicLong(0));
         sampleCounts.put("targetScans", new AtomicLong(0));
         sampleCounts.put("mountScans", new AtomicLong(0));
         sampleCounts.put("predicateChecks", new AtomicLong(0));
@@ -70,6 +74,10 @@ public class TargetingProfiler {
         sampleCounts.put("rangedDecisions", new AtomicLong(0));
         sampleCounts.put("meleeEngagements", new AtomicLong(0));
         sampleCounts.put("chaseTargetCalls", new AtomicLong(0));
+        sampleCounts.put("immediateThreatChecks", new AtomicLong(0));
+        sampleCounts.put("lineOfSightChecks", new AtomicLong(0));
+        sampleCounts.put("memoryChaseCalls", new AtomicLong(0));
+        sampleCounts.put("gossipHintQueries", new AtomicLong(0));
         // Soldier physics (gravity + drag + move)
         metrics.put("soldierPhysicsTime", new AtomicLong(0));
         sampleCounts.put("soldierPhysicsTicks", new AtomicLong(0));
@@ -321,6 +329,22 @@ public class TargetingProfiler {
         System.out.println(String.format("Chase Target: avg %.2f µs, total %.3f ms",
             getAverageTimeUs("chaseTargetTime", "chaseTargetCalls"),
             getTotalTimeMs("chaseTargetTime")
+        ));
+        System.out.println(String.format("Immediate Threat: avg %.2f µs, total %.3f ms",
+            getAverageTimeUs("immediateThreatTime", "immediateThreatChecks"),
+            getTotalTimeMs("immediateThreatTime")
+        ));
+        System.out.println(String.format("Line Of Sight Checks: avg %.2f µs, total %.3f ms",
+            getAverageTimeUs("lineOfSightTime", "lineOfSightChecks"),
+            getTotalTimeMs("lineOfSightTime")
+        ));
+        System.out.println(String.format("Memory Chase: avg %.2f µs, total %.3f ms",
+            getAverageTimeUs("memoryChaseTime", "memoryChaseCalls"),
+            getTotalTimeMs("memoryChaseTime")
+        ));
+        System.out.println(String.format("Gossip Hint Query: avg %.2f µs, total %.3f ms",
+            getAverageTimeUs("gossipHintTime", "gossipHintQueries"),
+            getTotalTimeMs("gossipHintTime")
         ));
         System.out.println("--- Other Systems ---");
         System.out.println(String.format("Soldier Physics (move): %d ticks (avg %.2f µs/tick, total %.3f ms)",
