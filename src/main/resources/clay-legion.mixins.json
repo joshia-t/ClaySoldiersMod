@@ -3,7 +3,8 @@
 	"package": "io.github.joshiat.claylegion.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
-		"ExampleMixin"
+		"ExampleMixin",
+		"ItemEntityPickupSanitizeMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

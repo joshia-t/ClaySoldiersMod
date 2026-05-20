@@ -5,6 +5,7 @@ import io.github.joshiat.claylegion.entity.projectile.ClayProjectileEntity;
 import io.github.joshiat.claylegion.item.SoldierDollItem;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
 import io.github.joshiat.claylegion.registry.ItemRegistry;
+import io.github.joshiat.claylegion.entity.drop.DropStackMetadata;
 import io.github.joshiat.claylegion.entity.team.SoldierTeam;
 import io.github.joshiat.claylegion.entity.team.TeamRegistry;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags;
@@ -21,8 +22,10 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -61,6 +64,9 @@ public class ClaySoldierEntity extends Entity {
 
     public static final float MAX_HEALTH = 20.0f;
     private static final float ATTACK_DAMAGE = 1.0f;
+    private static final float STICK_DAMAGE_BONUS = 2.0f;
+    private static final short STICK_MAX_USES = 20;
+    private static final int DEFAULT_DOLL_RESURRECTION_USES = 1;
     private static final double GRAVITY = 0.08;
     private static final double DRAG = 0.98;
 
@@ -82,6 +88,8 @@ public class ClaySoldierEntity extends Entity {
     private static final double MAX_CHASE_SPEED = 0.1;
     private static final int JUMP_ASSIST_COOLDOWN_TICKS = 6;
     private static final int SEPARATION_UPDATE_INTERVAL = 4;
+    private static final int UPGRADE_PICKUP_UPDATE_INTERVAL = 10;
+    private static final double UPGRADE_PICKUP_RANGE = 0.55;
     // Sanity bounds on the auto-measured correction interval the glide is
     // spread over. The duration self-tunes to the real packet cadence; these
     // only cap a dropped/bunched packet so it eases to rest at the true
@@ -112,6 +120,7 @@ public class ClaySoldierEntity extends Entity {
     private int slowTicks;
     private int combustionTicks;
     private int combustionDamageCooldown;
+    private short stickUsesRemaining;
     private Vec3 cachedSeparation = Vec3.ZERO;
     private UUID nexusOriginId;
 
@@ -330,6 +339,10 @@ public class ClaySoldierEntity extends Entity {
         return activeUpgrades;
     }
 
+    public int getStickUsesRemaining() {
+        return this.hasUpgrade(UpgradeFlags.STICK) ? Short.toUnsignedInt(stickUsesRemaining) : 0;
+    }
+
     public boolean hasUpgrade(long flag) {
         return (activeUpgrades & flag) == flag;
     }
@@ -338,6 +351,79 @@ public class ClaySoldierEntity extends Entity {
         this.activeUpgrades = upgrades;
         this.upgradeState.setRaw(upgrades);
         this.entityData.set(ACTIVE_UPGRADES, upgrades);
+
+        if (!hasUpgrade(UpgradeFlags.STICK)) {
+            this.stickUsesRemaining = 0;
+        } else if (this.stickUsesRemaining <= 0) {
+            this.stickUsesRemaining = STICK_MAX_USES;
+        }
+    }
+
+    private float getMeleeAttackDamage() {
+        float damage = ATTACK_DAMAGE;
+        if (hasUpgrade(UpgradeFlags.STICK)) {
+            damage += STICK_DAMAGE_BONUS;
+        }
+        return damage;
+    }
+
+    private void onMeleeAttackSuccess() {
+        if (!hasUpgrade(UpgradeFlags.STICK)) {
+            return;
+        }
+
+        if (this.stickUsesRemaining > 0) {
+            this.stickUsesRemaining--;
+        }
+
+        if (this.stickUsesRemaining <= 0) {
+            setActiveUpgrades(this.activeUpgrades & ~UpgradeFlags.STICK);
+        }
+    }
+
+    private boolean tryPickupNearbyUpgrade(long gameTime) {
+        if (((gameTime + getId()) % UPGRADE_PICKUP_UPDATE_INTERVAL) != 0) {
+            return false;
+        }
+
+        AABB pickupBox = getBoundingBox().inflate(UPGRADE_PICKUP_RANGE);
+        List<ItemEntity> itemEntities = level().getEntitiesOfClass(
+            ItemEntity.class,
+            pickupBox,
+            item -> item.isAlive() && !item.isRemoved()
+        );
+
+        for (ItemEntity itemEntity : itemEntities) {
+            ItemStack stack = itemEntity.getItem();
+            if (stack.isEmpty()) {
+                continue;
+            }
+
+            long upgradeBit = DropStackMetadata.getUpgradeFlagOrZero(stack);
+            if (upgradeBit == 0L) {
+                upgradeBit = UpgradeRegistry.getBitFor(stack.getItem());
+            }
+            if (upgradeBit == 0L || hasUpgrade(upgradeBit)) {
+                continue;
+            }
+
+            setActiveUpgrades(activeUpgrades | upgradeBit);
+            if (upgradeBit == UpgradeFlags.STICK) {
+                int uses = DropStackMetadata.getUpgradeUsesOrDefault(stack, STICK_MAX_USES);
+                this.stickUsesRemaining = (short) Math.max(1, Math.min(STICK_MAX_USES, uses));
+            }
+
+            stack.shrink(1);
+            if (stack.isEmpty()) {
+                itemEntity.discard();
+            } else {
+                itemEntity.setItem(stack);
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     public ClaySoldierEntity getCachedTarget() {
@@ -383,6 +469,9 @@ public class ClaySoldierEntity extends Entity {
 
         if (!hasUpgrade(upgradeBit)) {
             setActiveUpgrades(activeUpgrades | upgradeBit);
+            if (upgradeBit == UpgradeFlags.STICK) {
+                this.stickUsesRemaining = STICK_MAX_USES;
+            }
             if (!player.getAbilities().instabuild) {
                 held.shrink(1);
             }
@@ -588,6 +677,10 @@ public class ClaySoldierEntity extends Entity {
                 tickStatusEffects();
             }
 
+            if (tryPickupNearbyUpgrade(gameTime)) {
+                return;
+            }
+
             if (((gameTime + getId()) % SEPARATION_UPDATE_INTERVAL) == 0) {
                 if (profiling) {
                     long separationStart = System.nanoTime();
@@ -668,7 +761,8 @@ public class ClaySoldierEntity extends Entity {
 
                     if (attackCooldown <= 0) {
                         setAttackSwingTicks(ATTACK_SWING_DURATION);
-                        cachedTarget.applyCombatDamage(ATTACK_DAMAGE, this);
+                        cachedTarget.applyCombatDamage(getMeleeAttackDamage(), this);
+                        onMeleeAttackSuccess();
                         attackCooldown = ATTACK_COOLDOWN_TICKS;
                     }
                     TargetingProfiler.recordCombatSample("meleeEngagementTime", "meleeEngagements", System.nanoTime() - meleeStart, gameTime);
@@ -681,7 +775,8 @@ public class ClaySoldierEntity extends Entity {
 
                     if (attackCooldown <= 0) {
                         setAttackSwingTicks(ATTACK_SWING_DURATION);
-                        cachedTarget.applyCombatDamage(ATTACK_DAMAGE, this);
+                        cachedTarget.applyCombatDamage(getMeleeAttackDamage(), this);
+                        onMeleeAttackSuccess();
                         attackCooldown = ATTACK_COOLDOWN_TICKS;
                     }
                 }
@@ -998,8 +1093,19 @@ public class ClaySoldierEntity extends Entity {
         ItemStack drop = new ItemStack(isBrickSoldier()
             ? ItemRegistry.BRICK_SOLDIER_DOLL
             : ItemRegistry.SOLDIER_DOLL);
-        SoldierDollItem.setTeamIdOnStack(drop, getTeamId());
+        if (getTeamId() != 0) {
+            SoldierDollItem.setTeamIdOnStack(drop, getTeamId());
+        }
+        DropStackMetadata.setSoldierUses(drop, DEFAULT_DOLL_RESURRECTION_USES);
+
         spawnAtLocation(serverLevel, drop);
+
+        if (hasUpgrade(UpgradeFlags.STICK)) {
+            ItemStack upgradeDrop = new ItemStack(Items.STICK);
+            DropStackMetadata.setUpgradeData(upgradeDrop, UpgradeFlags.STICK, Short.toUnsignedInt(this.stickUsesRemaining));
+            spawnAtLocation(serverLevel, upgradeDrop);
+        }
+
         discard();
     }
 
@@ -1012,6 +1118,10 @@ public class ClaySoldierEntity extends Entity {
         upgradeState.readFromStorage(input);
         long persisted = input.getLong("ActiveUpgrades").orElse(upgradeState.getRaw());
         setActiveUpgrades(persisted);
+        this.stickUsesRemaining = (short) input.getShortOr("StickUsesRemaining", hasUpgrade(UpgradeFlags.STICK) ? STICK_MAX_USES : (short) 0);
+        if (!hasUpgrade(UpgradeFlags.STICK)) {
+            this.stickUsesRemaining = 0;
+        }
         String persistedNexusOriginId = input.getString("NexusOriginId").orElse(null);
         if (persistedNexusOriginId != null && !persistedNexusOriginId.isBlank()) {
             try {
@@ -1031,6 +1141,7 @@ public class ClaySoldierEntity extends Entity {
         output.putByte("EntityFlags", getFlags());
         output.putByte("AiState", getAiState().id);
         output.putLong("ActiveUpgrades", activeUpgrades);
+        output.putShort("StickUsesRemaining", this.stickUsesRemaining);
         if (nexusOriginId != null) {
             output.putString("NexusOriginId", nexusOriginId.toString());
         }

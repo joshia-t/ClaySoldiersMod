@@ -10,6 +10,7 @@ import io.github.joshiat.claylegion.entity.RuntimeTelemetry;
 import io.github.joshiat.claylegion.entity.TargetingProfiler;
 import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
 import io.github.joshiat.claylegion.entity.mount.TurtleMountEntity;
+import io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags;
 import io.github.joshiat.claylegion.registry.BlockEntityRegistry;
 import io.github.joshiat.claylegion.registry.BlockRegistry;
 import io.github.joshiat.claylegion.registry.CreativeTabRegistry;
@@ -224,6 +225,8 @@ public class ClayLegion implements ModInitializer {
 
 		String message = "ClaySoldier inspect | activeUpgrades=0x"
 			+ Long.toHexString(soldier.getActiveUpgrades()).toUpperCase(Locale.ROOT)
+			+ ", stick=" + soldier.hasUpgrade(UpgradeFlags.STICK)
+			+ ", stickUses=" + soldier.getStickUsesRemaining()
 			+ ", health=" + String.format(Locale.ROOT, "%.2f", soldier.getSoldierHealth())
 			+ ", combatState=" + soldier.getAiState().name()
 			+ ", " + RuntimeTelemetry.snapshot();
