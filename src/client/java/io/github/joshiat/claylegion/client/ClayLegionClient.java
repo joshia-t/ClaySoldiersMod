@@ -2,6 +2,7 @@ package io.github.joshiat.claylegion.client;
 
 import io.github.joshiat.claylegion.client.render.ClaySoldierEntityRenderer;
 import io.github.joshiat.claylegion.client.render.DebugPlaceholderEntityRenderer;
+import io.github.joshiat.claylegion.client.render.HorseMountRenderer;
 import io.github.joshiat.claylegion.client.render.MountEntityRenderer;
 import io.github.joshiat.claylegion.client.render.ModEntityModelLayers;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
@@ -13,7 +14,7 @@ public class ClayLegionClient implements ClientModInitializer {
 	public void onInitializeClient() {
 		ModEntityModelLayers.registerModelLayers();
 		EntityRendererRegistry.register(EntityRegistry.CLAY_SOLDIER, ClaySoldierEntityRenderer::new);
-		EntityRendererRegistry.register(EntityRegistry.HORSE_MOUNT, MountEntityRenderer::new);
+		EntityRendererRegistry.register(EntityRegistry.HORSE_MOUNT, HorseMountRenderer::new);
 		EntityRendererRegistry.register(EntityRegistry.PEGASUS_MOUNT, MountEntityRenderer::new);
 		EntityRendererRegistry.register(EntityRegistry.TURTLE_MOUNT, MountEntityRenderer::new);
 		EntityRendererRegistry.register(EntityRegistry.BUNNY_MOUNT, MountEntityRenderer::new);
