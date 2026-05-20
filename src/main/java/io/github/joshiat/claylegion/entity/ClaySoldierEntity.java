@@ -427,6 +427,9 @@ public class ClaySoldierEntity extends Entity {
             return;
         }
 
+        boolean physProfiling = TargetingProfiler.isEnabled();
+        long physicsStart = physProfiling ? System.nanoTime() : 0L;
+
         if (!onGround()) {
             if (isInWater()) {
                 Vec3 buoyant = getDeltaMovement();
@@ -445,6 +448,10 @@ public class ClaySoldierEntity extends Entity {
             setDeltaMovement(slowed.x * SLOW_VELOCITY_SCALAR, slowed.y, slowed.z * SLOW_VELOCITY_SCALAR);
         }
         move(MoverType.SELF, getDeltaMovement());
+
+        if (physProfiling) {
+            TargetingProfiler.recordCombatSample("soldierPhysicsTime", "soldierPhysicsTicks", System.nanoTime() - physicsStart, level().getGameTime());
+        }
 
         serverCombatTick();
     }
@@ -543,64 +550,144 @@ public class ClaySoldierEntity extends Entity {
             return;
         }
 
-        if (attackCooldown > 0) {
-            attackCooldown--;
-        }
-        if (jumpAssistCooldown > 0) {
-            jumpAssistCooldown--;
-        }
-        if (getHurtFlashTicks() > 0) {
-            setHurtFlashTicks(getHurtFlashTicks() - 1);
-        }
-        if (getAttackSwingTicks() > 0) {
-            setAttackSwingTicks(getAttackSwingTicks() - 1);
-        }
-        tickStatusEffects();
+        boolean profiling = TargetingProfiler.isEnabled();
+        long gameTime = level().getGameTime();
+        long combatStart = profiling ? System.nanoTime() : 0L;
 
-        if (((level().getGameTime() + getId()) % SEPARATION_UPDATE_INTERVAL) == 0) {
-            cachedSeparation = sampleSeparationForce();
-        }
+        try {
 
-        if (getAiState() == SoldierAiState.IDLE) {
-            cachedTarget = SoldierTargetingHelper.updateTargetCache(this, cachedTarget);
-        } else if (!SoldierTargetingHelper.hasValidTarget(this, cachedTarget)) {
-            cachedTarget = null;
-        }
+            if (attackCooldown > 0) {
+                attackCooldown--;
+            }
+            if (jumpAssistCooldown > 0) {
+                jumpAssistCooldown--;
+            }
+            if (getHurtFlashTicks() > 0) {
+                setHurtFlashTicks(getHurtFlashTicks() - 1);
+            }
+            if (getAttackSwingTicks() > 0) {
+                setAttackSwingTicks(getAttackSwingTicks() - 1);
+            }
 
-        if (cachedTarget == null) {
-            setAiState(SoldierAiState.IDLE);
+            if (profiling) {
+                long statusStart = System.nanoTime();
+                tickStatusEffects();
+                TargetingProfiler.recordCombatSample("statusEffectTime", "statusEffectTicks", System.nanoTime() - statusStart, gameTime);
+            } else {
+                tickStatusEffects();
+            }
 
-            if (tryAcquireMount()) {
+            if (((gameTime + getId()) % SEPARATION_UPDATE_INTERVAL) == 0) {
+                if (profiling) {
+                    long separationStart = System.nanoTime();
+                    cachedSeparation = sampleSeparationForce();
+                    TargetingProfiler.recordCombatSample("separationSampleTime", "separationSamples", System.nanoTime() - separationStart, gameTime);
+                } else {
+                    cachedSeparation = sampleSeparationForce();
+                }
+            }
+
+            if (profiling) {
+                long targetSelectStart = System.nanoTime();
+                if (getAiState() == SoldierAiState.IDLE) {
+                    cachedTarget = SoldierTargetingHelper.updateTargetCache(this, cachedTarget);
+                } else if (!SoldierTargetingHelper.hasValidTarget(this, cachedTarget)) {
+                    cachedTarget = null;
+                }
+                TargetingProfiler.recordCombatSample("targetSelectionTime", "targetSelections", System.nanoTime() - targetSelectStart, gameTime);
+            } else {
+                if (getAiState() == SoldierAiState.IDLE) {
+                    cachedTarget = SoldierTargetingHelper.updateTargetCache(this, cachedTarget);
+                } else if (!SoldierTargetingHelper.hasValidTarget(this, cachedTarget)) {
+                    cachedTarget = null;
+                }
+            }
+
+            if (cachedTarget == null) {
+                setAiState(SoldierAiState.IDLE);
+
+                boolean acquiredMount;
+                if (profiling) {
+                    long mountAcquireStart = System.nanoTime();
+                    acquiredMount = tryAcquireMount();
+                    TargetingProfiler.recordCombatSample("mountAcquireTime", "mountAcquireCalls", System.nanoTime() - mountAcquireStart, gameTime);
+                } else {
+                    acquiredMount = tryAcquireMount();
+                }
+                if (acquiredMount) {
+                    return;
+                }
+
+                if (profiling) {
+                    long idleBrakeStart = System.nanoTime();
+                    applyIdleBraking();
+                    TargetingProfiler.recordCombatSample("idleBrakeTime", "idleBrakeCalls", System.nanoTime() - idleBrakeStart, gameTime);
+                } else {
+                    applyIdleBraking();
+                }
+                resetObstructionTracking();
                 return;
             }
 
-            applyIdleBraking();
-            resetObstructionTracking();
-            return;
-        }
-
-        double distSq = distanceToSqr(cachedTarget);
-        if (distSq > ATTACK_RANGE_SQ && distSq <= RANGED_ATTACK_RANGE_SQ && tryRangedAttack(cachedTarget)) {
-            setAiState(SoldierAiState.ATTACKING);
-            faceTarget(cachedTarget);
-            return;
-        }
-
-        if (distSq <= ATTACK_RANGE_SQ) {
-            setAiState(SoldierAiState.ATTACKING);
-
-            Vec3 v = getDeltaMovement();
-            setDeltaMovement(0.0, v.y, 0.0);
-            faceTarget(cachedTarget);
-
-            if (attackCooldown <= 0) {
-                setAttackSwingTicks(ATTACK_SWING_DURATION);
-                cachedTarget.applyCombatDamage(ATTACK_DAMAGE, this);
-                attackCooldown = ATTACK_COOLDOWN_TICKS;
+            double distSq = distanceToSqr(cachedTarget);
+            if (distSq > ATTACK_RANGE_SQ && distSq <= RANGED_ATTACK_RANGE_SQ) {
+                boolean firedRanged;
+                if (profiling) {
+                    long rangedStart = System.nanoTime();
+                    firedRanged = tryRangedAttack(cachedTarget);
+                    TargetingProfiler.recordCombatSample("rangedDecisionTime", "rangedDecisions", System.nanoTime() - rangedStart, gameTime);
+                } else {
+                    firedRanged = tryRangedAttack(cachedTarget);
+                }
+                if (firedRanged) {
+                    setAiState(SoldierAiState.ATTACKING);
+                    faceTarget(cachedTarget);
+                    return;
+                }
             }
-        } else {
-            setAiState(SoldierAiState.CHASING);
-            chaseTarget(cachedTarget);
+
+            if (distSq <= ATTACK_RANGE_SQ) {
+                if (profiling) {
+                    long meleeStart = System.nanoTime();
+                    setAiState(SoldierAiState.ATTACKING);
+
+                    Vec3 v = getDeltaMovement();
+                    setDeltaMovement(0.0, v.y, 0.0);
+                    faceTarget(cachedTarget);
+
+                    if (attackCooldown <= 0) {
+                        setAttackSwingTicks(ATTACK_SWING_DURATION);
+                        cachedTarget.applyCombatDamage(ATTACK_DAMAGE, this);
+                        attackCooldown = ATTACK_COOLDOWN_TICKS;
+                    }
+                    TargetingProfiler.recordCombatSample("meleeEngagementTime", "meleeEngagements", System.nanoTime() - meleeStart, gameTime);
+                } else {
+                    setAiState(SoldierAiState.ATTACKING);
+
+                    Vec3 v = getDeltaMovement();
+                    setDeltaMovement(0.0, v.y, 0.0);
+                    faceTarget(cachedTarget);
+
+                    if (attackCooldown <= 0) {
+                        setAttackSwingTicks(ATTACK_SWING_DURATION);
+                        cachedTarget.applyCombatDamage(ATTACK_DAMAGE, this);
+                        attackCooldown = ATTACK_COOLDOWN_TICKS;
+                    }
+                }
+            } else {
+                setAiState(SoldierAiState.CHASING);
+                if (profiling) {
+                    long chaseStart = System.nanoTime();
+                    chaseTarget(cachedTarget);
+                    TargetingProfiler.recordCombatSample("chaseTargetTime", "chaseTargetCalls", System.nanoTime() - chaseStart, gameTime);
+                } else {
+                    chaseTarget(cachedTarget);
+                }
+            }
+        } finally {
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("combatTickTime", "combatTicks", System.nanoTime() - combatStart, gameTime);
+            }
         }
     }
 

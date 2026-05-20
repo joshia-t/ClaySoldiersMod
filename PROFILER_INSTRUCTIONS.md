@@ -1,6 +1,36 @@
 # Phase 1 Optimization & Profiler Usage
 
-## What Changed (Phase 1 Surgical Optimizations)
+## What the Profiler Now Covers
+
+The profiler instruments **every major server-side system** in the mod:
+
+| System | Metric Keys | Notes |
+|--------|-------------|-------|
+| Soldier targeting scan | `targetScanTime` / `targetScans` | AABB entity search |
+| Mount targeting scan | `mountScanTime` / `mountScans` | AABB entity search |
+| AABB query internals | `aabbQueryTime` / `aabbQueries` | Raw query cost |
+| Predicate checks | `predicateCheckTime` / `predicateChecks` | isValidTarget() |
+| Combat tick (total) | `combatTickTime` / `combatTicks` | Outer combat loop |
+| Status effects | `statusEffectTime` / `statusEffectTicks` | slow/combustion ticks |
+| Target selection | `targetSelectionTime` / `targetSelections` | updateTargetCache call |
+| Separation sampling | `separationSampleTime` / `separationSamples` | pushback force |
+| Mount acquire | `mountAcquireTime` / `mountAcquireCalls` | tryAcquireMount() |
+| Idle brake | `idleBrakeTime` / `idleBrakeCalls` | applyIdleBraking() |
+| Ranged decisions | `rangedDecisionTime` / `rangedDecisions` | tryRangedAttack() |
+| Melee engagements | `meleeEngagementTime` / `meleeEngagements` | applyCombatDamage() |
+| Chase target | `chaseTargetTime` / `chaseTargetCalls` | movement toward target |
+| **Soldier physics** | `soldierPhysicsTime` / `soldierPhysicsTicks` | gravity + drag + move() |
+| **Mount server tick** | `mountTickTime` / `mountTicks` | serverMountTick() |
+| **Projectile collision** | `projectileTickTime` / `projectileTicks` | performEntityCollisionCheck() |
+| **Nexus server tick** | `nexusTickTime` / `nexusTicks` | spawn logic |
+| **Nexus summon count** | `nexusSummonCountTime` / `nexusSummonCountCalls` | world-wide AABB scan |
+
+### Key hotspots to watch
+
+- **`nexusSummonCountTime`** — `countActiveSummons()` scans every entity in the entire world AABB; cost scales with total entity count, not soldier count. If multiple nexuses are active this fires frequently.
+- **`soldierPhysicsTime`** — `move()` performs block-collision AABB sweeps; with 500 soldiers this can rival targeting cost.
+- **`projectileTickTime`** — each in-flight projectile scans nearby entities every tick. High ranged-unit counts multiply this fast.
+- **`mountTickTime`** — includes lerp math and velocity blending per mount per tick.
 
 ### 1. **Stagger Intervals Increased**
 - `TARGET_SCAN_INTERVAL`: 12 → 16 ticks
@@ -44,10 +74,27 @@ Spawn ~500+ clay soldiers to generate load:
 Output format (example):
 ```
 ===== TargetingProfiler Report =====
-targetScanTime:       Average 0.123 µs (45230 samples)
-mountScanTime:        Average 0.087 µs (28150 samples)
-aabbQueryTime:        Average 0.045 µs (73380 samples)
-predicateCheckTime:   Average 0.018 µs (118560 samples)
+Target Scans:          45230 (avg 0.123 µs/scan, total 5.563 ms)
+Mount Scans:           28150 (avg 0.087 µs/scan, total 2.449 ms)
+AABB Queries:          avg 0.045 µs, total 3.298 ms
+Predicate Checks:      avg 0.018 µs, total 2.138 ms
+Combat Ticks:          500000 (avg 0.312 µs/tick, total 156.0 ms)
+Status Effects:        avg 0.011 µs, total 5.500 ms
+Target Selection:      avg 0.040 µs, total 20.0 ms
+Separation Samples:    avg 0.025 µs, total 3.125 ms
+Mount Acquire:         avg 0.018 µs, total 9.0 ms
+Idle Brake:            avg 0.008 µs, total 4.0 ms
+Ranged Decisions:      avg 0.022 µs, total 2.2 ms
+Melee Engagements:     avg 0.015 µs, total 7.5 ms
+Chase Target:          avg 0.019 µs, total 9.5 ms
+--- Other Systems ---
+Soldier Physics (move): 500000 ticks (avg 0.280 µs/tick, total 140.0 ms)
+Mount Server Tick:      12500 ticks  (avg 0.450 µs/tick, total 5.625 ms)
+Projectile Collision:   4800 ticks   (avg 0.380 µs/tick, total 1.824 ms)
+Nexus Server Tick:      2400 ticks   (avg 1.200 µs/tick, total 2.880 ms)
+Nexus Summon Count:     120 calls    (avg 85.0 µs/call,  total 10.2 ms)  ← watch this!
+Per-Tick Peaks: ...
+Other System Peaks/tick: soldierPhysics X.XXX ms, mount X.XXX ms, projectile X.XXX ms, nexus X.XXX ms
 ```
 
 ### Disable Profiler

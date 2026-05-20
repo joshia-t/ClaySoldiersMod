@@ -73,8 +73,12 @@ public class SoldierTargetingHelper {
         }
 
         if (profiling) {
-            TargetingProfiler.recordTime("targetScanTime", System.nanoTime() - startNanos);
-            TargetingProfiler.recordSample("targetScans");
+            TargetingProfiler.recordScan(
+                "targetScanTime",
+                "targetScans",
+                System.nanoTime() - startNanos,
+                soldier.level().getGameTime()
+            );
         }
         return best;
     }
@@ -120,8 +124,12 @@ public class SoldierTargetingHelper {
             }
         }
         if (profiling) {
-            TargetingProfiler.recordTime("mountScanTime", System.nanoTime() - startNanos);
-            TargetingProfiler.recordSample("mountScans");
+            TargetingProfiler.recordScan(
+                "mountScanTime",
+                "mountScans",
+                System.nanoTime() - startNanos,
+                soldier.level().getGameTime()
+            );
         }
         return best;
     }

@@ -1,6 +1,7 @@
 package io.github.joshiat.claylegion.entity.mount;
 
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
+import io.github.joshiat.claylegion.entity.TargetingProfiler;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
@@ -125,7 +126,12 @@ public abstract class BaseMountEntity extends Entity {
             return;
         }
 
+        boolean profiling = TargetingProfiler.isEnabled();
+        long mountStart = profiling ? System.nanoTime() : 0L;
         serverMountTick();
+        if (profiling) {
+            TargetingProfiler.recordCombatSample("mountTickTime", "mountTicks", System.nanoTime() - mountStart, level().getGameTime());
+        }
 
         // Apply gravity and drag to match standard physics.
         if (!onGround()) {

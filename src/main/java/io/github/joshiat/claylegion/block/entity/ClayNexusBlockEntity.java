@@ -2,6 +2,7 @@ package io.github.joshiat.claylegion.block.entity;
 
 import io.github.joshiat.claylegion.config.ClayLegionConfig;
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
+import io.github.joshiat.claylegion.entity.TargetingProfiler;
 import io.github.joshiat.claylegion.item.SoldierDollItem;
 import io.github.joshiat.claylegion.registry.BlockEntityRegistry;
 import net.minecraft.core.BlockPos;
@@ -123,12 +124,20 @@ public class ClayNexusBlockEntity extends BlockEntity {
     private void serverTick(ServerLevel serverLevel) {
         clampSettings();
 
+        boolean profiling = TargetingProfiler.isEnabled();
+        long nexusStart = profiling ? System.nanoTime() : 0L;
+        long gameTime = serverLevel.getGameTime();
+
         if (spawnCooldown > 0) {
             spawnCooldown--;
         }
 
         if (pendingSpawnCount <= 0 && spawnCount > 0 && maxSpawnLimit > 0 && spawnCooldown <= 0) {
+            long countStart = profiling ? System.nanoTime() : 0L;
             int activeSummons = countActiveSummons(serverLevel);
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("nexusSummonCountTime", "nexusSummonCountCalls", System.nanoTime() - countStart, gameTime);
+            }
             activeSummonCountHint = activeSummons;
             int available = Math.max(0, maxSpawnLimit - activeSummons);
             pendingSpawnCount = Math.min(spawnCount, available);
@@ -144,6 +153,10 @@ public class ClayNexusBlockEntity extends BlockEntity {
                 activeSummonCountHint++;
                 setChanged();
             }
+        }
+
+        if (profiling) {
+            TargetingProfiler.recordCombatSample("nexusTickTime", "nexusTicks", System.nanoTime() - nexusStart, gameTime);
         }
     }
 

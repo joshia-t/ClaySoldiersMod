@@ -2,6 +2,7 @@ package io.github.joshiat.claylegion.entity.projectile;
 
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
 import io.github.joshiat.claylegion.entity.RuntimeTelemetry;
+import io.github.joshiat.claylegion.entity.TargetingProfiler;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
@@ -95,7 +96,12 @@ public abstract class ClayProjectileEntity extends Entity {
         move(MoverType.SELF, getDeltaMovement());
 
         // Every tick, perform collision detection with nearby entities
+        boolean projProfiling = TargetingProfiler.isEnabled();
+        long projStart = projProfiling ? System.nanoTime() : 0L;
         performEntityCollisionCheck();
+        if (projProfiling) {
+            TargetingProfiler.recordCombatSample("projectileTickTime", "projectileTicks", System.nanoTime() - projStart, level().getGameTime());
+        }
     }
 
     private void performEntityCollisionCheck() {
