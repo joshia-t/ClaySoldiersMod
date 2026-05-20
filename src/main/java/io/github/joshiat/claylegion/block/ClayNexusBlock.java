@@ -23,6 +23,7 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.server.level.ServerLevel;
 
 public class ClayNexusBlock extends BaseEntityBlock implements EntityBlock {
 
@@ -103,6 +104,16 @@ public class ClayNexusBlock extends BaseEntityBlock implements EntityBlock {
         return level.isClientSide()
             ? null
             : createTickerHelper(type, BlockEntityRegistry.CLAY_NEXUS, ClayNexusBlockEntity::serverTick);
+    }
+
+    @Override
+    public BlockState playerWillDestroy(Level level, BlockPos pos, BlockState state, Player player) {
+        if (!level.isClientSide()
+            && level instanceof ServerLevel serverLevel
+            && level.getBlockEntity(pos) instanceof ClayNexusBlockEntity nexus) {
+            nexus.removeLinkedSummons(serverLevel);
+        }
+        return super.playerWillDestroy(level, pos, state, player);
     }
 
     @Override

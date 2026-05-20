@@ -1,7 +1,7 @@
 package io.github.joshiat.claylegion.entity;
 
 import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
-import net.minecraft.world.phys.AABB;
+import io.github.joshiat.claylegion.entity.mount.MountIndex;
 
 import java.util.List;
 import java.util.Map;
@@ -102,27 +102,12 @@ public class SoldierTargetingHelper {
 
         boolean profiling = TargetingProfiler.isEnabled();
         long startNanos = profiling ? System.nanoTime() : 0L;
-        AABB scanBox = soldier.getBoundingBox().inflate(MOUNT_SEARCH_RANGE, 1.2, MOUNT_SEARCH_RANGE);
-        long aabbStart = profiling ? System.nanoTime() : 0L;
-        List<BaseMountEntity> candidates = soldier.level().getEntitiesOfClass(
-            BaseMountEntity.class,
-            scanBox,
-            e -> isMountCandidate(e)
+        BaseMountEntity best = MountIndex.get(soldier.level()).findNearestAvailable(
+            soldier.getX(),
+            soldier.getY(),
+            soldier.getZ(),
+            MOUNT_SEARCH_RANGE_SQ
         );
-        if (profiling) {
-            TargetingProfiler.recordTime("aabbQueryTime", System.nanoTime() - aabbStart);
-            TargetingProfiler.recordSample("aabbQueries");
-        }
-
-        double bestDistSq = Double.MAX_VALUE;
-        BaseMountEntity best = null;
-        for (BaseMountEntity candidate : candidates) {
-            double distSq = soldier.distanceToSqr(candidate);
-            if (distSq <= MOUNT_SEARCH_RANGE_SQ && distSq < bestDistSq) {
-                bestDistSq = distSq;
-                best = candidate;
-            }
-        }
         if (profiling) {
             TargetingProfiler.recordScan(
                 "mountScanTime",
@@ -162,17 +147,10 @@ public class SoldierTargetingHelper {
     }
 
     private static boolean isMountCandidate(BaseMountEntity candidate) {
-        boolean profiling = TargetingProfiler.isEnabled();
-        long checkStart = profiling ? System.nanoTime() : 0L;
-        boolean result = candidate != null
+        return candidate != null
             && candidate.isAlive()
             && !candidate.isRemoved()
             && candidate.getMaxPassengers() > candidate.getPassengers().size();
-        if (profiling) {
-            TargetingProfiler.recordTime("predicateCheckTime", System.nanoTime() - checkStart);
-            TargetingProfiler.recordSample("predicateChecks");
-        }
-        return result;
     }
 
     /**

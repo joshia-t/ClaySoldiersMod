@@ -104,6 +104,7 @@ public class ClaySoldierEntity extends Entity {
     private ClaySoldierEntity cachedTarget;
     private BaseMountEntity cachedMountTarget;
     private boolean registeredInSoldierIndex = false;
+    private boolean registeredInNexusIndex = false;
     private int attackCooldown;
     private int jumpAssistCooldown;
     private double obstructionBaseY;
@@ -544,6 +545,16 @@ public class ClaySoldierEntity extends Entity {
         if (!registeredInSoldierIndex) {
             SoldierIndex.get(level()).register(this);
             registeredInSoldierIndex = true;
+        }
+
+        if (isNexusSummon() && nexusOriginId != null) {
+            if (!registeredInNexusIndex) {
+                NexusSummonIndex.get(level()).register(this);
+                registeredInNexusIndex = true;
+            }
+        } else if (registeredInNexusIndex) {
+            NexusSummonIndex.get(level()).unregister(this);
+            registeredInNexusIndex = false;
         }
 
         if (isSoldierDead()) {
@@ -1040,6 +1051,10 @@ public class ClaySoldierEntity extends Entity {
         if (registeredInSoldierIndex && !level().isClientSide()) {
             SoldierIndex.get(level()).unregister(this);
             registeredInSoldierIndex = false;
+        }
+        if (!level().isClientSide() && (registeredInNexusIndex || (isNexusSummon() && nexusOriginId != null))) {
+            NexusSummonIndex.get(level()).unregister(this);
+            registeredInNexusIndex = false;
         }
         super.remove(reason);
     }

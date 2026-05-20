@@ -2,6 +2,7 @@ package io.github.joshiat.claylegion.block.entity;
 
 import io.github.joshiat.claylegion.config.ClayLegionConfig;
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
+import io.github.joshiat.claylegion.entity.NexusSummonIndex;
 import io.github.joshiat.claylegion.entity.TargetingProfiler;
 import io.github.joshiat.claylegion.item.SoldierDollItem;
 import io.github.joshiat.claylegion.registry.BlockEntityRegistry;
@@ -10,12 +11,10 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.border.WorldBorder;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.server.level.ServerLevel;
 
 import java.util.UUID;
@@ -182,24 +181,28 @@ public class ClayNexusBlockEntity extends BlockEntity {
             soldier.setNexusOriginId(nexusId);
             soldier.setYRot(serverLevel.getRandom().nextFloat() * 360.0f);
             soldier.setXRot(0.0f);
-            return serverLevel.addFreshEntity(soldier);
+            boolean spawned = serverLevel.addFreshEntity(soldier);
+            if (spawned) {
+                // Register immediately so same-tick nexus removal can still clean up this soldier.
+                NexusSummonIndex.get(serverLevel).register(soldier);
+            }
+            return spawned;
         }
 
         return false;
     }
 
     private int countActiveSummons(ServerLevel serverLevel) {
-        WorldBorder worldBorder = serverLevel.getWorldBorder();
-        AABB searchBox = new AABB(
-            worldBorder.getMinX(), serverLevel.getMinY(), worldBorder.getMinZ(),
-            worldBorder.getMaxX(), serverLevel.getMaxY(), worldBorder.getMaxZ()
-        );
-        return serverLevel.getEntitiesOfClass(ClaySoldierEntity.class, searchBox, soldier ->
-            soldier.isAlive()
-                && !soldier.isRemoved()
-                && soldier.isNexusSummon()
-                && nexusId.equals(soldier.getNexusOriginId())
-        ).size();
+        return NexusSummonIndex.get(serverLevel).countActive(nexusId);
+    }
+
+    public void removeLinkedSummons(ServerLevel serverLevel) {
+        int removed = NexusSummonIndex.get(serverLevel).removeAllForNexus(serverLevel, nexusId);
+        if (removed > 0) {
+            activeSummonCountHint = 0;
+            pendingSpawnCount = 0;
+            setChanged();
+        }
     }
 
     private void clampSettings() {

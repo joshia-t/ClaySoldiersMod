@@ -40,6 +40,8 @@ public abstract class BaseMountEntity extends Entity {
     private static final float MOUNT_CHASE_BLEND = 0.35f;
     private static final double MOUNT_JUMP_VELOCITY = 0.46;
 
+    private boolean registeredInMountIndex = false;
+
     public BaseMountEntity(EntityType<? extends BaseMountEntity> type, Level level) {
         super(type, level);
     }
@@ -124,6 +126,13 @@ public abstract class BaseMountEntity extends Entity {
             setDeltaMovement(getDeltaMovement().multiply(DRAG, 1.0, DRAG));
             move(MoverType.SELF, getDeltaMovement());
             return;
+        }
+
+        if (!registeredInMountIndex) {
+            MountIndex.get(level()).register(this);
+            registeredInMountIndex = true;
+        } else {
+            MountIndex.get(level()).refreshAvailability(this);
         }
 
         boolean profiling = TargetingProfiler.isEnabled();
@@ -232,6 +241,15 @@ public abstract class BaseMountEntity extends Entity {
         ClaySoldierEntity soldierAttacker = attacker instanceof ClaySoldierEntity s ? s : null;
         applyMountDamage(amount, soldierAttacker);
         return !isMountDead();
+    }
+
+    @Override
+    public void remove(Entity.RemovalReason reason) {
+        if (registeredInMountIndex && !level().isClientSide()) {
+            MountIndex.get(level()).unregister(this);
+            registeredInMountIndex = false;
+        }
+        super.remove(reason);
     }
 
     @Override
