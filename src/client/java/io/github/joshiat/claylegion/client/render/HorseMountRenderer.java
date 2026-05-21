@@ -46,6 +46,11 @@ public class HorseMountRenderer extends EntityRenderer<BaseMountEntity, MountEnt
 
         poseStack.pushPose();
         poseStack.mulPose(Axis.YP.rotationDegrees(-state.renderYaw));
+        poseStack.mulPose(Axis.YP.rotationDegrees(180.0f));
+        // Blockbench exports with y=0 at top, y=24 at ground (y-down).
+        // EntityRenderer expects y=0 at ground, y-up. Flip y and shift up 24px (1.5 blocks).
+        poseStack.translate(0.0, 24.0 / 16.0, 0.0);
+        poseStack.scale(1.0f, -1.0f, 1.0f);
 
         RenderType renderType = model.renderType(TEXTURE);
         collector.submitModel(
