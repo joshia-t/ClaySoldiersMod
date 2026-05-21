@@ -1,7 +1,10 @@
 package io.github.joshiat.claylegion.item;
 
+import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
+import java.util.function.ToIntFunction;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
@@ -15,16 +18,24 @@ import net.minecraft.world.level.Level;
 /**
  * Lightweight debug spawner item for Phase 2 testing.
  *
- * This intentionally behaves like a spawn egg substitute without using vanilla
- * SpawnEggItem so we can keep custom entity wiring simple during migration.
+ * Acts like a spawn egg substitute. Optionally tags the spawned mount with a
+ * variant byte via {@link #variantPicker}; if null, the entity's default
+ * variant (0) is used.
  */
 public class EntitySpawnerItem extends Item {
 
     private final EntityType<? extends Entity> spawnType;
+    private final ToIntFunction<RandomSource> variantPicker;
 
     public EntitySpawnerItem(Properties properties, EntityType<? extends Entity> spawnType) {
+        this(properties, spawnType, null);
+    }
+
+    public EntitySpawnerItem(Properties properties, EntityType<? extends Entity> spawnType,
+                             ToIntFunction<RandomSource> variantPicker) {
         super(properties);
         this.spawnType = spawnType;
+        this.variantPicker = variantPicker;
     }
 
     @Override
@@ -46,6 +57,10 @@ public class EntitySpawnerItem extends Item {
         entity.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
         entity.setYRot(level.getRandom().nextFloat() * 360.0f);
         entity.setXRot(0.0f);
+
+        if (variantPicker != null && entity instanceof BaseMountEntity mount) {
+            mount.setVariant((byte) variantPicker.applyAsInt(level.getRandom()));
+        }
 
         level.addFreshEntity(entity);
 
