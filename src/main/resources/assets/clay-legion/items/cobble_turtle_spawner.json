@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "clay-legion:item/turtle_spawner"
+  }
+}

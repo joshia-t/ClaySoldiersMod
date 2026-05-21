@@ -3,6 +3,7 @@ package io.github.joshiat.claylegion.client.render;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
+import io.github.joshiat.claylegion.entity.mount.HorseVariant;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
@@ -13,9 +14,6 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.phys.Vec3;
 
 public class HorseMountRenderer extends EntityRenderer<BaseMountEntity, MountEntityRenderState> {
-
-    private static final Identifier TEXTURE =
-        Identifier.fromNamespaceAndPath("clay-legion", "textures/entity/clay_horse.png");
 
     private final HorseMountModel model;
 
@@ -34,6 +32,7 @@ public class HorseMountRenderer extends EntityRenderer<BaseMountEntity, MountEnt
     public void extractRenderState(BaseMountEntity entity, MountEntityRenderState state, float partialTick) {
         super.extractRenderState(entity, state, partialTick);
         state.renderYaw = entity.getYRot();
+        state.variant = entity.getVariant();
         Vec3 velocity = entity.getDeltaMovement();
         state.horizontalSpeed = (float) Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
         state.animTime = entity.tickCount + partialTick;
@@ -46,13 +45,13 @@ public class HorseMountRenderer extends EntityRenderer<BaseMountEntity, MountEnt
 
         poseStack.pushPose();
         poseStack.mulPose(Axis.YP.rotationDegrees(-state.renderYaw));
+        // OLD models faced +Z; modern entities face -Z, so flip 180 deg around Y.
         poseStack.mulPose(Axis.YP.rotationDegrees(180.0f));
-        // Blockbench exports with y=0 at top, y=24 at ground (y-down).
-        // EntityRenderer expects y=0 at ground, y-up. Flip y and shift up 24px (1.5 blocks).
-        poseStack.translate(0.0, 24.0 / 16.0, 0.0);
-        poseStack.scale(1.0f, -1.0f, 1.0f);
+        // y-flip is baked into model geometry (y_modern = -y_1.7 + Y_FEET), so just scale to size.
+        poseStack.scale(0.5f, 0.5f, 0.5f);
 
-        RenderType renderType = model.renderType(TEXTURE);
+        Identifier texture = HorseVariant.textureFor(state.variant);
+        RenderType renderType = model.renderType(texture);
         collector.submitModel(
             model,
             state,

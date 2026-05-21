@@ -1,0 +1,71 @@
+package io.github.joshiat.claylegion.client.render;
+
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
+import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
+import io.github.joshiat.claylegion.entity.mount.GeckoVariant;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.entity.EntityRenderer;
+import net.minecraft.client.renderer.entity.EntityRendererProvider;
+import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.phys.Vec3;
+
+public class GeckoMountRenderer extends EntityRenderer<BaseMountEntity, MountEntityRenderState> {
+
+    private final GeckoMountModel model;
+
+    public GeckoMountRenderer(EntityRendererProvider.Context ctx) {
+        super(ctx);
+        this.model = new GeckoMountModel(ctx.bakeLayer(ModEntityModelLayers.CLAY_GECKO));
+        this.shadowRadius = 0.18f;
+    }
+
+    @Override
+    public MountEntityRenderState createRenderState() {
+        return new MountEntityRenderState();
+    }
+
+    @Override
+    public void extractRenderState(BaseMountEntity entity, MountEntityRenderState state, float partialTick) {
+        super.extractRenderState(entity, state, partialTick);
+        state.renderYaw = entity.getYRot();
+        state.variant = entity.getVariant();
+        Vec3 velocity = entity.getDeltaMovement();
+        state.horizontalSpeed = (float) Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+        state.animTime = entity.tickCount + partialTick;
+    }
+
+    @Override
+    public void submit(MountEntityRenderState state, PoseStack poseStack,
+                       SubmitNodeCollector collector, CameraRenderState cameraRenderState) {
+        super.submit(state, poseStack, collector, cameraRenderState);
+
+        poseStack.pushPose();
+        poseStack.mulPose(Axis.YP.rotationDegrees(-state.renderYaw));
+        poseStack.mulPose(Axis.YP.rotationDegrees(180.0f));
+        poseStack.scale(1.0f, 1.0f, 1.0f);
+
+        // Pass 1: body (base colour layer)
+        Identifier bodyTexture = GeckoVariant.bodyTextureFor(state.variant);
+        RenderType bodyRenderType = model.renderType(bodyTexture);
+        collector.submitModel(
+            model, state, poseStack, bodyRenderType,
+            state.lightCoords, OverlayTexture.NO_OVERLAY,
+            0xFFFFFFFF, null, state.outlineColor, null
+        );
+
+        // Pass 2: spots overlay (transparent spots pattern on top, matching OLD two-pass design)
+        Identifier spotsTexture = GeckoVariant.spotsTextureFor(state.variant);
+        RenderType spotsRenderType = model.renderType(spotsTexture);
+        collector.submitModel(
+            model, state, poseStack, spotsRenderType,
+            state.lightCoords, OverlayTexture.NO_OVERLAY,
+            0xFFFFFFFF, null, state.outlineColor, null
+        );
+
+        poseStack.popPose();
+    }
+}
