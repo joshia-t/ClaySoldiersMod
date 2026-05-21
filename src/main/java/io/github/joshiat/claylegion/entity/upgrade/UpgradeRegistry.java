@@ -20,6 +20,9 @@ public final class UpgradeRegistry {
     static {
         Map<Item, Long> map = new HashMap<>();
 
+        // Main-hand stat upgrades
+        map.put(Items.STICK, UpgradeFlags.STICK);
+
         // Projectile-path upgrades
         map.put(Items.FLINT, UpgradeFlags.FLINT);
         map.put(Items.GRAVEL, UpgradeFlags.GRAVEL);

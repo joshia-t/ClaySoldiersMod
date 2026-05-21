@@ -47,7 +47,7 @@ public class HorseMountRenderer extends EntityRenderer<BaseMountEntity, MountEnt
         poseStack.mulPose(Axis.YP.rotationDegrees(-state.renderYaw));
         // OLD models faced +Z; modern entities face -Z, so flip 180 deg around Y.
         poseStack.mulPose(Axis.YP.rotationDegrees(180.0f));
-        // OLD preRenderCallback: scale 0.5 to clay-soldier size.
+        // y-flip is baked into model geometry (y_modern = -y_1.7 + Y_FEET), so just scale to size.
         poseStack.scale(0.5f, 0.5f, 0.5f);
 
         Identifier texture = HorseVariant.textureFor(state.variant);

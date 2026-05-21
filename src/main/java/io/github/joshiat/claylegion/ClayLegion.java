@@ -2,12 +2,17 @@ package io.github.joshiat.claylegion;
 
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.arguments.BoolArgumentType;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import io.github.joshiat.claylegion.config.ClayLegionConfig;
 import io.github.joshiat.claylegion.entity.CombatTuning;
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
 import io.github.joshiat.claylegion.entity.RuntimeTelemetry;
+import io.github.joshiat.claylegion.entity.TargetingProfiler;
 import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
 import io.github.joshiat.claylegion.entity.mount.TurtleMountEntity;
+import io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags;
+import io.github.joshiat.claylegion.registry.BlockEntityRegistry;
+import io.github.joshiat.claylegion.registry.BlockRegistry;
 import io.github.joshiat.claylegion.registry.CreativeTabRegistry;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
 import io.github.joshiat.claylegion.registry.ItemRegistry;
@@ -41,6 +46,8 @@ public class ClayLegion implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		BlockRegistry.init();
+		BlockEntityRegistry.init();
 		EntityRegistry.init();
 		ItemRegistry.init();
 		CreativeTabRegistry.init();
@@ -83,6 +90,25 @@ public class ClayLegion implements ModInitializer {
 						.executes(ctx -> debugInspect(ctx.getSource())))
 					.then(literal("inspectmount")
 						.executes(ctx -> debugInspectMount(ctx.getSource()))))
+				.then(literal("profiler")
+					.then(literal("enable")
+						.executes(ctx -> {
+							TargetingProfiler.setEnabled(true);
+							ctx.getSource().sendSuccess(() -> Component.literal("TargetingProfiler enabled."), false);
+							return 1;
+						}))
+					.then(literal("disable")
+						.executes(ctx -> {
+							TargetingProfiler.setEnabled(false);
+							ctx.getSource().sendSuccess(() -> Component.literal("TargetingProfiler disabled."), false);
+							return 1;
+						}))
+					.then(literal("report")
+						.executes(ctx -> {
+							TargetingProfiler.printReport();
+							ctx.getSource().sendSuccess(() -> Component.literal("TargetingProfiler report printed to console."), false);
+							return 1;
+						})))
 				.then(literal("config")
 					.then(literal("show")
 						.executes(ctx -> sendCurrentConfig(ctx.getSource())))
@@ -162,6 +188,20 @@ public class ClayLegion implements ModInitializer {
 									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
 									return sendCurrentConfig(ctx.getSource());
 								})))
+						.then(literal("nexusMaxSpawnLimit")
+							.then(argument("value", IntegerArgumentType.integer(0))
+								.executes(ctx -> {
+									ClayLegionConfig.setNexusMaxSpawnLimit(IntegerArgumentType.getInteger(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
+						.then(literal("nexusMaxSpawnCount")
+							.then(argument("value", IntegerArgumentType.integer(0))
+								.executes(ctx -> {
+									ClayLegionConfig.setNexusMaxSpawnCount(IntegerArgumentType.getInteger(ctx, "value"));
+									ClayLegionConfig.saveRuntimeToDisk(LOGGER);
+									return sendCurrentConfig(ctx.getSource());
+								})))
 					)
 				)
 			)
@@ -185,6 +225,9 @@ public class ClayLegion implements ModInitializer {
 
 		String message = "ClaySoldier inspect | activeUpgrades=0x"
 			+ Long.toHexString(soldier.getActiveUpgrades()).toUpperCase(Locale.ROOT)
+			+ ", stick=" + soldier.hasUpgrade(UpgradeFlags.STICK)
+			+ ", stickUses=" + soldier.getStickUsesRemaining()
+			+ ", memory=" + String.format(Locale.ROOT, "%.2f", soldier.getTargetMemoryConfidence())
 			+ ", health=" + String.format(Locale.ROOT, "%.2f", soldier.getSoldierHealth())
 			+ ", combatState=" + soldier.getAiState().name()
 			+ ", " + RuntimeTelemetry.snapshot();
@@ -326,6 +369,8 @@ public class ClayLegion implements ModInitializer {
 				+ ", combat.idleHorizontalBrake=" + CombatTuning.getIdleHorizontalBrake()
 				+ ", combat.playerDamageMultiplier=" + CombatTuning.getPlayerDamageMultiplier()
 				+ ", combat.soldierCollisionEnabled=" + CombatTuning.isSoldierCollisionEnabled()
+				+ ", nexus.maxSpawnLimit=" + ClayLegionConfig.getNexusMaxSpawnLimit()
+				+ ", nexus.maxSpawnCount=" + ClayLegionConfig.getNexusMaxSpawnCount()
 		), false);
 		return 1;
 	}

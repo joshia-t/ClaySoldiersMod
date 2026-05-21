@@ -16,6 +16,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 
 public final class ItemRegistry {
@@ -59,6 +60,11 @@ public final class ItemRegistry {
     public static final EntitySpawnerItem GECKO_SPAWNER = track(GECKO_SPAWNER_KEY,
         new EntitySpawnerItem(props(GECKO_SPAWNER_KEY), EntityRegistry.GECKO_MOUNT,
             r -> GeckoVariant.OAK.pickRandomIndex(r) & 0xff));
+
+    private static final ResourceKey<Item> CLAY_NEXUS_KEY = ResourceKey.create(
+        Registries.ITEM,
+        Identifier.fromNamespaceAndPath("clay-legion", "clay_nexus")
+    );
 
     // === Horse variant spawners (11) ===
     public static final EntitySpawnerItem CLAY_HORSE_SPAWNER     = horseSpawner("clay_horse_spawner", HorseVariant.CLAY);
@@ -123,6 +129,9 @@ public final class ItemRegistry {
     public static final EntitySpawnerItem ACACIA_GECKO_SPAWNER  = geckoSpawner("acacia_gecko_spawner", GeckoVariant.ACACIA);
     public static final EntitySpawnerItem DARKOAK_GECKO_SPAWNER = geckoSpawner("darkoak_gecko_spawner", GeckoVariant.DARKOAK);
     public static final EntitySpawnerItem PINE_GECKO_SPAWNER    = geckoSpawner("pine_gecko_spawner", GeckoVariant.PINE);
+
+    public static final BlockItem CLAY_NEXUS = track(CLAY_NEXUS_KEY,
+        new BlockItem(BlockRegistry.CLAY_NEXUS, props(CLAY_NEXUS_KEY)));
 
     public static void init() {
         REGISTRATIONS.forEach((k, v) -> Registry.register(BuiltInRegistries.ITEM, k, v));

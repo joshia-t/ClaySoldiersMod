@@ -1,6 +1,7 @@
 package io.github.joshiat.claylegion.entity.mount;
 
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
+import io.github.joshiat.claylegion.entity.TargetingProfiler;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
@@ -38,6 +39,8 @@ public abstract class BaseMountEntity extends Entity {
     private static final double MOUNT_CHASE_SPEED = 0.24;
     private static final float MOUNT_CHASE_BLEND = 0.35f;
     private static final double MOUNT_JUMP_VELOCITY = 0.46;
+
+    private boolean registeredInMountIndex = false;
 
     public BaseMountEntity(EntityType<? extends BaseMountEntity> type, Level level) {
         super(type, level);
@@ -125,7 +128,19 @@ public abstract class BaseMountEntity extends Entity {
             return;
         }
 
+        if (!registeredInMountIndex) {
+            MountIndex.get(level()).register(this);
+            registeredInMountIndex = true;
+        } else {
+            MountIndex.get(level()).refreshAvailability(this);
+        }
+
+        boolean profiling = TargetingProfiler.isEnabled();
+        long mountStart = profiling ? System.nanoTime() : 0L;
         serverMountTick();
+        if (profiling) {
+            TargetingProfiler.recordCombatSample("mountTickTime", "mountTicks", System.nanoTime() - mountStart, level().getGameTime());
+        }
 
         // Apply gravity and drag to match standard physics.
         if (!onGround()) {
@@ -226,6 +241,15 @@ public abstract class BaseMountEntity extends Entity {
         ClaySoldierEntity soldierAttacker = attacker instanceof ClaySoldierEntity s ? s : null;
         applyMountDamage(amount, soldierAttacker);
         return !isMountDead();
+    }
+
+    @Override
+    public void remove(Entity.RemovalReason reason) {
+        if (registeredInMountIndex && !level().isClientSide()) {
+            MountIndex.get(level()).unregister(this);
+            registeredInMountIndex = false;
+        }
+        super.remove(reason);
     }
 
     @Override

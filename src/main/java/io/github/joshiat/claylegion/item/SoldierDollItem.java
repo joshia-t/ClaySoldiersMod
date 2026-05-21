@@ -75,6 +75,10 @@ public class SoldierDollItem extends Item {
         return getTeamIdFromStack(stack, 0);
     }
 
+    public int getTeamId(ItemStack stack) {
+        return getTeamIdFromStack(stack, defaultTeamId);
+    }
+
     public static int getTeamIdFromStack(ItemStack stack, int defaultTeamId) {
         CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
         if (customData == null) {

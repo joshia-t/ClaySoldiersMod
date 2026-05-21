@@ -5,6 +5,7 @@ import io.github.joshiat.claylegion.entity.projectile.ClayProjectileEntity;
 import io.github.joshiat.claylegion.item.SoldierDollItem;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
 import io.github.joshiat.claylegion.registry.ItemRegistry;
+import io.github.joshiat.claylegion.entity.drop.DropStackMetadata;
 import io.github.joshiat.claylegion.entity.team.SoldierTeam;
 import io.github.joshiat.claylegion.entity.team.TeamRegistry;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags;
@@ -21,8 +22,10 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -32,6 +35,7 @@ import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.util.Mth;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Core clay soldier entity.
@@ -58,35 +62,44 @@ public class ClaySoldierEntity extends Entity {
     private static final EntityDataAccessor<Long> ACTIVE_UPGRADES =
             SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.LONG);
 
-    public static final float MAX_HEALTH = 4.0f;
+    public static final float MAX_HEALTH = 20.0f;
     private static final float ATTACK_DAMAGE = 1.0f;
+    private static final float STICK_DAMAGE_BONUS = 2.0f;
+    private static final short STICK_MAX_USES = 20;
+    private static final int DEFAULT_DOLL_RESURRECTION_USES = 1;
     private static final double GRAVITY = 0.08;
     private static final double DRAG = 0.98;
 
-    private static final int TARGET_SCAN_INTERVAL = 12;
-    private static final int MOUNT_SCAN_INTERVAL = 8;
-    private static final double TARGET_RANGE_XZ = 4.0;
-    private static final double TARGET_RANGE_Y = 1.8;
-    private static final double TARGET_RANGE_SQ = 8.0 * 8.0;
-    private static final double MOUNT_SEARCH_RANGE = 8.0;
-    private static final double MOUNT_SEARCH_RANGE_SQ = MOUNT_SEARCH_RANGE * MOUNT_SEARCH_RANGE;
     private static final double MOUNT_BOARD_RANGE = 0.8;
     private static final double MOUNT_BOARD_RANGE_SQ = MOUNT_BOARD_RANGE * MOUNT_BOARD_RANGE;
 
     private static final double ATTACK_RANGE = 0.8;
     private static final double ATTACK_RANGE_SQ = ATTACK_RANGE * ATTACK_RANGE;
-    private static final int ATTACK_COOLDOWN_TICKS = 10;
+    private static final int ATTACK_COOLDOWN_TICKS = 20;
     private static final int RANGED_ATTACK_COOLDOWN_TICKS = 18;
     private static final double RANGED_ATTACK_RANGE = 6.0;
     private static final double RANGED_ATTACK_RANGE_SQ = RANGED_ATTACK_RANGE * RANGED_ATTACK_RANGE;
+    private static final double RETALIATE_AGGRO_RANGE_SQ = RANGED_ATTACK_RANGE_SQ;
     private static final double PROJECTILE_SPEED = 0.55;
     private static final int ATTACK_SWING_DURATION = 7;
     private static final int HURT_FLASH_DURATION = 8;
+    private static final int TARGET_MEMORY_DURATION_TICKS = 90;
+    private static final int TARGET_LOS_FRESHNESS_TICKS = 6;
+    private static final int ACTIVE_LOS_CHECK_INTERVAL = 4;
+    private static final int IDLE_LOS_CHECK_INTERVAL = 10;
+    private static final int SHOUT_BROADCAST_INTERVAL = 12;
+    private static final float GOSSIP_MIN_CHASE_STRENGTH = 0.18f;
+    private static final int IMMEDIATE_THREAT_CHECK_INTERVAL = 2;
+    private static final double IMMEDIATE_THREAT_RANGE = 2.0;
+    private static final double GOSSIP_MAX_RANGE_BLOCKS = 16.0 * 10.0;
+    private static final double TARGET_MEMORY_REACHED_SQ = 1.2 * 1.2;
 
-    private static final double CHASE_ACCEL = 0.06;
-    private static final double MAX_CHASE_SPEED = 0.18;
+    private static final double CHASE_ACCEL = 0.05;
+    private static final double MAX_CHASE_SPEED = 0.1;
     private static final int JUMP_ASSIST_COOLDOWN_TICKS = 6;
     private static final int SEPARATION_UPDATE_INTERVAL = 4;
+    private static final int UPGRADE_PICKUP_UPDATE_INTERVAL = 10;
+    private static final double UPGRADE_PICKUP_RANGE = 0.55;
     // Sanity bounds on the auto-measured correction interval the glide is
     // spread over. The duration self-tunes to the real packet cadence; these
     // only cap a dropped/bunched packet so it eases to rest at the true
@@ -95,6 +108,7 @@ public class ClaySoldierEntity extends Entity {
     private static final int MAX_INTERP_DURATION_TICKS = 6;
 
     private static final byte FLAG_BRICK = 0x02;
+    private static final byte FLAG_NEXUS_SUMMON = 0x04;
     private static final float SLOW_VELOCITY_SCALAR = 0.5f;
     private static final int SLOW_DURATION_TICKS = 40;
     private static final int COMBUSTION_DURATION_TICKS = 80;
@@ -107,6 +121,8 @@ public class ClaySoldierEntity extends Entity {
 
     private ClaySoldierEntity cachedTarget;
     private BaseMountEntity cachedMountTarget;
+    private boolean registeredInSoldierIndex = false;
+    private boolean registeredInNexusIndex = false;
     private int attackCooldown;
     private int jumpAssistCooldown;
     private double obstructionBaseY;
@@ -114,7 +130,16 @@ public class ClaySoldierEntity extends Entity {
     private int slowTicks;
     private int combustionTicks;
     private int combustionDamageCooldown;
+    private short stickUsesRemaining;
+    private double targetMemoryX;
+    private double targetMemoryY;
+    private double targetMemoryZ;
+    private float targetMemoryConfidence;
+    private long targetMemoryExpiryTick = Long.MIN_VALUE;
+    private long lastDirectSightTick = Long.MIN_VALUE;
+    private long lastShoutTick = Long.MIN_VALUE;
     private Vec3 cachedSeparation = Vec3.ZERO;
+    private UUID nexusOriginId;
 
     // Client interpolation: glide from the transform we had when the last
     // correction arrived ("from") to the server target ("to") at a constant
@@ -176,21 +201,11 @@ public class ClaySoldierEntity extends Entity {
      * This is the legacy method used for projectiles and non-soldier damage sources.
      */
     public void applySoldierDamage(float amount, byte attackingTeam) {
-        if (level().isClientSide() || isSoldierDead() || amount <= 0.0f) {
-            return;
-        }
+        SoldierCombatDamageHelper.applySoldierDamage(this, amount, attackingTeam, null);
+    }
 
-        // Friendly-fire suppression for direct soldier-vs-soldier damage calls.
-        if (attackingTeam >= 0 && attackingTeam == (byte) getTeamId()) {
-            return;
-        }
-
-        float newHealth = getSoldierHealth() - amount;
-        setSoldierHealth(newHealth);
-        setHurtFlashTicks(HURT_FLASH_DURATION);
-        if (newHealth <= 0f && level() instanceof ServerLevel serverLevel) {
-            onSoldierKilled(serverLevel);
-        }
+    public void applySoldierDamage(float amount, byte attackingTeam, Entity attackerEntity) {
+        SoldierCombatDamageHelper.applySoldierDamage(this, amount, attackingTeam, attackerEntity);
     }
 
     /**
@@ -204,66 +219,19 @@ public class ClaySoldierEntity extends Entity {
      *  - Mounted vs Mounted: 50/50 split between rider and mount
      */
     public void applyCombatDamage(float rawDamage, ClaySoldierEntity attacker) {
-        applyCombatDamage(rawDamage, attacker, -1.0f, 1.0f);
+        SoldierCombatDamageHelper.applyCombatDamage(this, rawDamage, attacker);
     }
 
     public void applyCombatDamage(float rawDamage, ClaySoldierEntity attacker,
                                   float riderHitChanceOverride, float rawDamageMultiplier) {
-        if (level().isClientSide() || isSoldierDead() || rawDamage <= 0.0f) {
-            return;
-        }
-
-        // Friendly-fire suppression
-        if (attacker != null && attacker.getTeamId() == getTeamId()) {
-            return;
-        }
-
-        boolean attackerMounted = attacker != null && attacker.getVehicle() != null;
-        boolean targetMounted = this.getVehicle() != null;
-        float resolvedDamage = rawDamage * Math.max(0.0f, rawDamageMultiplier);
-
-        if (!targetMounted) {
-            // Target is infantry: take full damage
-            processDirectDamage(resolvedDamage, attacker);
-            return;
-        }
-
-        // Target is mounted: resolve via chance-based rider/mount roll.
-        float roll = this.random.nextFloat();
-        float riderHitChance = attackerMounted ? 0.50f : 0.20f;
-        if (riderHitChanceOverride >= 0.0f) {
-            riderHitChance = Mth.clamp(riderHitChanceOverride, 0.0f, 1.0f);
-        }
-
-        Entity mount = this.getVehicle();
-        if (roll < riderHitChance) {
-            // Damage bypasses mount and hits the rider directly.
-            processDirectDamage(resolvedDamage, attacker);
-        } else {
-            // Delegate damage to the mount.
-            if (mount instanceof io.github.joshiat.claylegion.entity.mount.BaseMountEntity legacyMount) {
-                legacyMount.applyMountDamage(resolvedDamage, attacker);
-            }
-        }
-    }
-
-    /**
-     * Process direct damage to the soldier (bypasses mount logic).
-     */
-    private void processDirectDamage(float amount, ClaySoldierEntity attacker) {
-        float newHealth = getSoldierHealth() - amount;
-        setSoldierHealth(newHealth);
-        setHurtFlashTicks(HURT_FLASH_DURATION);
-        if (newHealth <= 0f && level() instanceof ServerLevel serverLevel) {
-            onSoldierKilled(serverLevel);
-        }
+        SoldierCombatDamageHelper.applyCombatDamage(this, rawDamage, attacker, riderHitChanceOverride, rawDamageMultiplier);
     }
 
     public int getHurtFlashTicks() {
         return entityData.get(HURT_FLASH_TICKS);
     }
 
-    private void setHurtFlashTicks(int ticks) {
+    public void setHurtFlashTicks(int ticks) {
         entityData.set(HURT_FLASH_TICKS, (byte) Math.max(0, Math.min(127, ticks)));
     }
 
@@ -363,12 +331,37 @@ public class ClaySoldierEntity extends Entity {
         setFlags(brick ? (byte) (flags | FLAG_BRICK) : (byte) (flags & ~FLAG_BRICK));
     }
 
+    public boolean isNexusSummon() {
+        return (getFlags() & FLAG_NEXUS_SUMMON) != 0;
+    }
+
+    public void setNexusSummon(boolean summoned) {
+        byte flags = getFlags();
+        setFlags(summoned ? (byte) (flags | FLAG_NEXUS_SUMMON) : (byte) (flags & ~FLAG_NEXUS_SUMMON));
+    }
+
+    public UUID getNexusOriginId() {
+        return nexusOriginId;
+    }
+
+    public void setNexusOriginId(UUID nexusOriginId) {
+        this.nexusOriginId = nexusOriginId;
+    }
+
     public UpgradeState getUpgradeState() {
         return upgradeState;
     }
 
     public long getActiveUpgrades() {
         return activeUpgrades;
+    }
+
+    public int getStickUsesRemaining() {
+        return this.hasUpgrade(UpgradeFlags.STICK) ? Short.toUnsignedInt(stickUsesRemaining) : 0;
+    }
+
+    public float getTargetMemoryConfidence() {
+        return targetMemoryConfidence;
     }
 
     public boolean hasUpgrade(long flag) {
@@ -379,10 +372,272 @@ public class ClaySoldierEntity extends Entity {
         this.activeUpgrades = upgrades;
         this.upgradeState.setRaw(upgrades);
         this.entityData.set(ACTIVE_UPGRADES, upgrades);
+
+        if (!hasUpgrade(UpgradeFlags.STICK)) {
+            this.stickUsesRemaining = 0;
+        } else if (this.stickUsesRemaining <= 0) {
+            this.stickUsesRemaining = STICK_MAX_USES;
+        }
+    }
+
+    private float getMeleeAttackDamage() {
+        float damage = ATTACK_DAMAGE;
+        if (hasUpgrade(UpgradeFlags.STICK)) {
+            damage += STICK_DAMAGE_BONUS;
+        }
+        return damage;
+    }
+
+    private void onMeleeAttackSuccess() {
+        if (!hasUpgrade(UpgradeFlags.STICK)) {
+            return;
+        }
+
+        if (this.stickUsesRemaining > 0) {
+            this.stickUsesRemaining--;
+        }
+
+        if (this.stickUsesRemaining <= 0) {
+            setActiveUpgrades(this.activeUpgrades & ~UpgradeFlags.STICK);
+        }
+    }
+
+    private boolean tryPickupNearbyUpgrade(long gameTime) {
+        if (((gameTime + getId()) % UPGRADE_PICKUP_UPDATE_INTERVAL) != 0) {
+            return false;
+        }
+
+        AABB pickupBox = getBoundingBox().inflate(UPGRADE_PICKUP_RANGE);
+        List<ItemEntity> itemEntities = level().getEntitiesOfClass(
+            ItemEntity.class,
+            pickupBox,
+            item -> item.isAlive() && !item.isRemoved()
+        );
+
+        for (ItemEntity itemEntity : itemEntities) {
+            ItemStack stack = itemEntity.getItem();
+            if (stack.isEmpty()) {
+                continue;
+            }
+
+            long upgradeBit = DropStackMetadata.getUpgradeFlagOrZero(stack);
+            if (upgradeBit == 0L) {
+                upgradeBit = UpgradeRegistry.getBitFor(stack.getItem());
+            }
+            if (upgradeBit == 0L || hasUpgrade(upgradeBit)) {
+                continue;
+            }
+
+            setActiveUpgrades(activeUpgrades | upgradeBit);
+            if (upgradeBit == UpgradeFlags.STICK) {
+                int uses = DropStackMetadata.getUpgradeUsesOrDefault(stack, STICK_MAX_USES);
+                this.stickUsesRemaining = (short) Math.max(1, Math.min(STICK_MAX_USES, uses));
+            }
+
+            stack.shrink(1);
+            if (stack.isEmpty()) {
+                itemEntity.discard();
+            } else {
+                itemEntity.setItem(stack);
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     public ClaySoldierEntity getCachedTarget() {
         return cachedTarget;
+    }
+
+    public void noteEnemySighting(ClaySoldierEntity enemy, double x, double y, double z,
+                                  float confidence, long gameTime, boolean allowRetarget) {
+        if (confidence <= 0.0f) {
+            return;
+        }
+
+        updateTargetMemory(x, y, z, confidence, gameTime);
+
+        if (enemy == null || enemy == this || enemy.isSoldierDead() || enemy.getTeamId() == getTeamId()) {
+            return;
+        }
+
+        if (!SoldierTargetingHelper.hasValidTarget(this, enemy)) {
+            return;
+        }
+
+        if (cachedTarget == null) {
+            cachedTarget = enemy;
+            cachedMountTarget = null;
+            if (getAiState() == SoldierAiState.IDLE) {
+                setAiState(SoldierAiState.CHASING);
+            }
+            return;
+        }
+
+        if (!allowRetarget) {
+            return;
+        }
+
+        if (getAiState() == SoldierAiState.IDLE && !hasRecentLineOfSight(gameTime)) {
+            cachedTarget = enemy;
+            cachedMountTarget = null;
+            setAiState(SoldierAiState.CHASING);
+        }
+    }
+
+    private void updateTargetMemory(double x, double y, double z, float confidence, long gameTime) {
+        float clamped = Mth.clamp(confidence, 0.0f, 1.0f);
+        if (targetMemoryConfidence <= 1.0E-6f) {
+            targetMemoryX = x;
+            targetMemoryY = y;
+            targetMemoryZ = z;
+        } else {
+            float mix = Math.max(0.15f, clamped);
+            targetMemoryX = targetMemoryX + (x - targetMemoryX) * mix;
+            targetMemoryY = targetMemoryY + (y - targetMemoryY) * mix;
+            targetMemoryZ = targetMemoryZ + (z - targetMemoryZ) * mix;
+        }
+
+        targetMemoryConfidence = Math.max(targetMemoryConfidence, clamped);
+        targetMemoryExpiryTick = gameTime + TARGET_MEMORY_DURATION_TICKS;
+    }
+
+    private void clearTargetMemory() {
+        targetMemoryConfidence = 0.0f;
+        targetMemoryExpiryTick = Long.MIN_VALUE;
+    }
+
+    private boolean hasTargetMemory(long gameTime) {
+        return targetMemoryConfidence > 0.01f && gameTime <= targetMemoryExpiryTick;
+    }
+
+    private boolean hasRecentLineOfSight(long gameTime) {
+        return lastDirectSightTick != Long.MIN_VALUE && (gameTime - lastDirectSightTick) <= TARGET_LOS_FRESHNESS_TICKS;
+    }
+
+    private boolean shouldCheckLineOfSight(long gameTime) {
+        int interval = getAiState() == SoldierAiState.IDLE ? IDLE_LOS_CHECK_INTERVAL : ACTIVE_LOS_CHECK_INTERVAL;
+        return Math.floorMod(gameTime + getId(), interval) == 0;
+    }
+
+    private void onEnemyDirectlySeen(ClaySoldierEntity enemy, long gameTime) {
+        lastDirectSightTick = gameTime;
+        noteEnemySighting(enemy, enemy.getX(), enemy.getY(), enemy.getZ(), 1.0f, gameTime, true);
+        TeamGossipIndex.get(level()).reportEnemySighting(
+            getTeamId(),
+            enemy.getTeamId(),
+            enemy.getX(),
+            enemy.getY(),
+            enemy.getZ(),
+            1.0f,
+            gameTime
+        );
+
+        if (gameTime - lastShoutTick >= SHOUT_BROADCAST_INTERVAL) {
+            SoldierTargetingHelper.relayEnemySighting(this, enemy, gameTime);
+            lastShoutTick = gameTime;
+        }
+    }
+
+    private boolean chaseTargetMemory(long gameTime) {
+        boolean profiling = TargetingProfiler.isEnabled();
+        long start = profiling ? System.nanoTime() : 0L;
+        if (!hasTargetMemory(gameTime)) {
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("memoryChaseTime", "memoryChaseCalls", System.nanoTime() - start, gameTime);
+            }
+            return false;
+        }
+
+        Vec3 memoryPos = new Vec3(targetMemoryX, targetMemoryY, targetMemoryZ);
+        double distSq = position().distanceToSqr(memoryPos);
+        if (distSq <= TARGET_MEMORY_REACHED_SQ) {
+            targetMemoryConfidence *= 0.6f;
+            if (targetMemoryConfidence < 0.05f) {
+                clearTargetMemory();
+            }
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("memoryChaseTime", "memoryChaseCalls", System.nanoTime() - start, gameTime);
+            }
+            return false;
+        }
+
+        chasePosition(memoryPos);
+        if (profiling) {
+            TargetingProfiler.recordCombatSample("memoryChaseTime", "memoryChaseCalls", System.nanoTime() - start, gameTime);
+        }
+        return true;
+    }
+
+    private boolean tryAcquireImmediateThreat(long gameTime) {
+        boolean profiling = TargetingProfiler.isEnabled();
+        long start = profiling ? System.nanoTime() : 0L;
+        if (Math.floorMod(gameTime + getId(), IMMEDIATE_THREAT_CHECK_INTERVAL) != 0) {
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("immediateThreatTime", "immediateThreatChecks", System.nanoTime() - start, gameTime);
+            }
+            return false;
+        }
+
+        double rangeSq = IMMEDIATE_THREAT_RANGE * IMMEDIATE_THREAT_RANGE;
+        AABB nearbyBox = getBoundingBox().inflate(IMMEDIATE_THREAT_RANGE, 1.25, IMMEDIATE_THREAT_RANGE);
+        List<ClaySoldierEntity> nearbyEnemies = level().getEntitiesOfClass(
+            ClaySoldierEntity.class,
+            nearbyBox,
+            candidate -> candidate != this
+                && candidate.isAlive()
+                && !candidate.isRemoved()
+                && !candidate.isSoldierDead()
+                && candidate.getTeamId() != getTeamId()
+        );
+
+        ClaySoldierEntity best = null;
+        double bestSq = rangeSq;
+        for (int i = 0, size = nearbyEnemies.size(); i < size; i++) {
+            ClaySoldierEntity candidate = nearbyEnemies.get(i);
+            double distSq = distanceToSqr(candidate);
+            if (distSq > bestSq) {
+                continue;
+            }
+            if (!SoldierTargetingHelper.hasLineOfSight(this, candidate)) {
+                continue;
+            }
+
+            best = candidate;
+            bestSq = distSq;
+        }
+
+        if (best == null) {
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("immediateThreatTime", "immediateThreatChecks", System.nanoTime() - start, gameTime);
+            }
+            return false;
+        }
+
+        noteEnemySighting(best, best.getX(), best.getY(), best.getZ(), 1.0f, gameTime, true);
+        if (profiling) {
+            TargetingProfiler.recordCombatSample("immediateThreatTime", "immediateThreatChecks", System.nanoTime() - start, gameTime);
+        }
+        return true;
+    }
+
+    public void aggroOnHit(ClaySoldierEntity attacker) {
+        if (attacker == null || attacker == this || attacker.isSoldierDead()) {
+            return;
+        }
+        if (attacker.getTeamId() == getTeamId()) {
+            return;
+        }
+        if (getAiState() != SoldierAiState.IDLE) {
+            return;
+        }
+        if (distanceToSqr(attacker) > RETALIATE_AGGRO_RANGE_SQ) {
+            return;
+        }
+
+        noteEnemySighting(attacker, attacker.getX(), attacker.getY(), attacker.getZ(), 1.0f, level().getGameTime(), true);
     }
 
     @Override
@@ -405,6 +660,9 @@ public class ClaySoldierEntity extends Entity {
 
         if (!hasUpgrade(upgradeBit)) {
             setActiveUpgrades(activeUpgrades | upgradeBit);
+            if (upgradeBit == UpgradeFlags.STICK) {
+                this.stickUsesRemaining = STICK_MAX_USES;
+            }
             if (!player.getAbilities().instabuild) {
                 held.shrink(1);
             }
@@ -450,6 +708,9 @@ public class ClaySoldierEntity extends Entity {
             return;
         }
 
+        boolean physProfiling = TargetingProfiler.isEnabled();
+        long physicsStart = physProfiling ? System.nanoTime() : 0L;
+
         if (!onGround()) {
             if (isInWater()) {
                 Vec3 buoyant = getDeltaMovement();
@@ -468,6 +729,10 @@ public class ClaySoldierEntity extends Entity {
             setDeltaMovement(slowed.x * SLOW_VELOCITY_SCALAR, slowed.y, slowed.z * SLOW_VELOCITY_SCALAR);
         }
         move(MoverType.SELF, getDeltaMovement());
+
+        if (physProfiling) {
+            TargetingProfiler.recordCombatSample("soldierPhysicsTime", "soldierPhysicsTicks", System.nanoTime() - physicsStart, level().getGameTime());
+        }
 
         serverCombatTick();
     }
@@ -556,64 +821,253 @@ public class ClaySoldierEntity extends Entity {
         this.xRotO = getXRot();
     }
 
+    private boolean updateAwarenessAndTarget(long gameTime) {
+        tryAcquireImmediateThreat(gameTime);
+
+        if (!SoldierTargetingHelper.hasValidTarget(this, cachedTarget)) {
+            cachedTarget = null;
+        }
+
+        if (cachedTarget == null) {
+            cachedTarget = SoldierTargetingHelper.updateTargetCache(this, null);
+            if (cachedTarget != null) {
+                onEnemyDirectlySeen(cachedTarget, gameTime);
+                return true;
+            }
+            return false;
+        }
+
+        if (shouldCheckLineOfSight(gameTime)) {
+            boolean profiling = TargetingProfiler.isEnabled();
+            long losStart = profiling ? System.nanoTime() : 0L;
+            if (SoldierTargetingHelper.hasLineOfSight(this, cachedTarget)) {
+                onEnemyDirectlySeen(cachedTarget, gameTime);
+                if (profiling) {
+                    TargetingProfiler.recordCombatSample("lineOfSightTime", "lineOfSightChecks", System.nanoTime() - losStart, gameTime);
+                }
+                return true;
+            }
+
+            if (!hasRecentLineOfSight(gameTime)) {
+                ClaySoldierEntity reacquired = SoldierTargetingHelper.updateTargetCache(this, null);
+                if (reacquired != null && reacquired != cachedTarget) {
+                    cachedTarget = reacquired;
+                    onEnemyDirectlySeen(cachedTarget, gameTime);
+                    if (profiling) {
+                        TargetingProfiler.recordCombatSample("lineOfSightTime", "lineOfSightChecks", System.nanoTime() - losStart, gameTime);
+                    }
+                    return true;
+                }
+            }
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("lineOfSightTime", "lineOfSightChecks", System.nanoTime() - losStart, gameTime);
+            }
+        }
+
+        return hasRecentLineOfSight(gameTime);
+    }
+
     private void serverCombatTick() {
+        if (!registeredInSoldierIndex) {
+            SoldierIndex.get(level()).register(this);
+            registeredInSoldierIndex = true;
+        }
+
+        if (isNexusSummon() && nexusOriginId != null) {
+            if (!registeredInNexusIndex) {
+                NexusSummonIndex.get(level()).register(this);
+                registeredInNexusIndex = true;
+            }
+        } else if (registeredInNexusIndex) {
+            NexusSummonIndex.get(level()).unregister(this);
+            registeredInNexusIndex = false;
+        }
+
         if (isSoldierDead()) {
             return;
         }
 
-        if (attackCooldown > 0) {
-            attackCooldown--;
-        }
-        if (jumpAssistCooldown > 0) {
-            jumpAssistCooldown--;
-        }
-        if (getHurtFlashTicks() > 0) {
-            setHurtFlashTicks(getHurtFlashTicks() - 1);
-        }
-        if (getAttackSwingTicks() > 0) {
-            setAttackSwingTicks(getAttackSwingTicks() - 1);
-        }
-        tickStatusEffects();
+        boolean profiling = TargetingProfiler.isEnabled();
+        long gameTime = level().getGameTime();
+        long combatStart = profiling ? System.nanoTime() : 0L;
 
-        if (((level().getGameTime() + getId()) % SEPARATION_UPDATE_INTERVAL) == 0) {
-            cachedSeparation = sampleSeparationForce();
-        }
+        try {
 
-        if (tryAcquireMount()) {
-            return;
-        }
-
-        updateTargetCache();
-
-        if (cachedTarget == null) {
-            setAiState(SoldierAiState.IDLE);
-            applyIdleBraking();
-            resetObstructionTracking();
-            return;
-        }
-
-        double distSq = distanceToSqr(cachedTarget);
-        if (distSq > ATTACK_RANGE_SQ && distSq <= RANGED_ATTACK_RANGE_SQ && tryRangedAttack(cachedTarget)) {
-            setAiState(SoldierAiState.ATTACKING);
-            faceTarget(cachedTarget);
-            return;
-        }
-
-        if (distSq <= ATTACK_RANGE_SQ) {
-            setAiState(SoldierAiState.ATTACKING);
-
-            Vec3 v = getDeltaMovement();
-            setDeltaMovement(0.0, v.y, 0.0);
-            faceTarget(cachedTarget);
-
-            if (attackCooldown <= 0) {
-                setAttackSwingTicks(ATTACK_SWING_DURATION);
-                cachedTarget.applyCombatDamage(ATTACK_DAMAGE, this);
-                attackCooldown = ATTACK_COOLDOWN_TICKS;
+            if (attackCooldown > 0) {
+                attackCooldown--;
             }
-        } else {
-            setAiState(SoldierAiState.CHASING);
-            chaseTarget(cachedTarget);
+            if (jumpAssistCooldown > 0) {
+                jumpAssistCooldown--;
+            }
+            if (getHurtFlashTicks() > 0) {
+                setHurtFlashTicks(getHurtFlashTicks() - 1);
+            }
+            if (getAttackSwingTicks() > 0) {
+                setAttackSwingTicks(getAttackSwingTicks() - 1);
+            }
+
+            if (profiling) {
+                long statusStart = System.nanoTime();
+                tickStatusEffects();
+                TargetingProfiler.recordCombatSample("statusEffectTime", "statusEffectTicks", System.nanoTime() - statusStart, gameTime);
+            } else {
+                tickStatusEffects();
+            }
+
+            if (tryPickupNearbyUpgrade(gameTime)) {
+                return;
+            }
+
+            if (((gameTime + getId()) % SEPARATION_UPDATE_INTERVAL) == 0) {
+                if (profiling) {
+                    long separationStart = System.nanoTime();
+                    cachedSeparation = sampleSeparationForce();
+                    TargetingProfiler.recordCombatSample("separationSampleTime", "separationSamples", System.nanoTime() - separationStart, gameTime);
+                } else {
+                    cachedSeparation = sampleSeparationForce();
+                }
+            }
+
+            boolean targetVisible = false;
+            if (profiling) {
+                long targetSelectStart = System.nanoTime();
+                targetVisible = updateAwarenessAndTarget(gameTime);
+                TargetingProfiler.recordCombatSample("targetSelectionTime", "targetSelections", System.nanoTime() - targetSelectStart, gameTime);
+            } else {
+                targetVisible = updateAwarenessAndTarget(gameTime);
+            }
+
+            if (cachedTarget == null) {
+                if (chaseTargetMemory(gameTime)) {
+                    setAiState(SoldierAiState.CHASING);
+                    return;
+                }
+
+                TeamGossipIndex.GossipHint hint;
+                if (profiling) {
+                    long gossipStart = System.nanoTime();
+                    hint = TeamGossipIndex.get(level()).getStrongestEnemyHint(
+                        getTeamId(),
+                        getX(),
+                        getY(),
+                        getZ(),
+                        GOSSIP_MAX_RANGE_BLOCKS * GOSSIP_MAX_RANGE_BLOCKS,
+                        gameTime
+                    );
+                    TargetingProfiler.recordCombatSample("gossipHintTime", "gossipHintQueries", System.nanoTime() - gossipStart, gameTime);
+                } else {
+                    hint = TeamGossipIndex.get(level()).getStrongestEnemyHint(
+                        getTeamId(),
+                        getX(),
+                        getY(),
+                        getZ(),
+                        GOSSIP_MAX_RANGE_BLOCKS * GOSSIP_MAX_RANGE_BLOCKS,
+                        gameTime
+                    );
+                }
+                if (hint != null && hint.strength >= GOSSIP_MIN_CHASE_STRENGTH) {
+                    noteEnemySighting(null, hint.x, hint.y, hint.z, Math.min(0.45f, hint.strength / 8.0f), gameTime, false);
+                    if (chaseTargetMemory(gameTime)) {
+                        setAiState(SoldierAiState.CHASING);
+                        return;
+                    }
+                }
+
+                setAiState(SoldierAiState.IDLE);
+
+                boolean acquiredMount;
+                if (profiling) {
+                    long mountAcquireStart = System.nanoTime();
+                    acquiredMount = tryAcquireMount();
+                    TargetingProfiler.recordCombatSample("mountAcquireTime", "mountAcquireCalls", System.nanoTime() - mountAcquireStart, gameTime);
+                } else {
+                    acquiredMount = tryAcquireMount();
+                }
+                if (acquiredMount) {
+                    return;
+                }
+
+                if (profiling) {
+                    long idleBrakeStart = System.nanoTime();
+                    applyIdleBraking();
+                    TargetingProfiler.recordCombatSample("idleBrakeTime", "idleBrakeCalls", System.nanoTime() - idleBrakeStart, gameTime);
+                } else {
+                    applyIdleBraking();
+                }
+                resetObstructionTracking();
+                return;
+            }
+
+            if (!targetVisible) {
+                setAiState(SoldierAiState.CHASING);
+                if (!chaseTargetMemory(gameTime)) {
+                    cachedTarget = null;
+                    applyIdleBraking();
+                }
+                return;
+            }
+
+            double distSq = distanceToSqr(cachedTarget);
+            if (distSq > ATTACK_RANGE_SQ && distSq <= RANGED_ATTACK_RANGE_SQ) {
+                boolean firedRanged;
+                if (profiling) {
+                    long rangedStart = System.nanoTime();
+                    firedRanged = tryRangedAttack(cachedTarget);
+                    TargetingProfiler.recordCombatSample("rangedDecisionTime", "rangedDecisions", System.nanoTime() - rangedStart, gameTime);
+                } else {
+                    firedRanged = tryRangedAttack(cachedTarget);
+                }
+                if (firedRanged) {
+                    setAiState(SoldierAiState.ATTACKING);
+                    faceTarget(cachedTarget);
+                    return;
+                }
+            }
+
+            if (distSq <= ATTACK_RANGE_SQ) {
+                if (profiling) {
+                    long meleeStart = System.nanoTime();
+                    setAiState(SoldierAiState.ATTACKING);
+
+                    Vec3 v = getDeltaMovement();
+                    setDeltaMovement(0.0, v.y, 0.0);
+                    faceTarget(cachedTarget);
+
+                    if (attackCooldown <= 0) {
+                        setAttackSwingTicks(ATTACK_SWING_DURATION);
+                        cachedTarget.applyCombatDamage(getMeleeAttackDamage(), this);
+                        onMeleeAttackSuccess();
+                        attackCooldown = ATTACK_COOLDOWN_TICKS;
+                    }
+                    TargetingProfiler.recordCombatSample("meleeEngagementTime", "meleeEngagements", System.nanoTime() - meleeStart, gameTime);
+                } else {
+                    setAiState(SoldierAiState.ATTACKING);
+
+                    Vec3 v = getDeltaMovement();
+                    setDeltaMovement(0.0, v.y, 0.0);
+                    faceTarget(cachedTarget);
+
+                    if (attackCooldown <= 0) {
+                        setAttackSwingTicks(ATTACK_SWING_DURATION);
+                        cachedTarget.applyCombatDamage(getMeleeAttackDamage(), this);
+                        onMeleeAttackSuccess();
+                        attackCooldown = ATTACK_COOLDOWN_TICKS;
+                    }
+                }
+            } else {
+                setAiState(SoldierAiState.CHASING);
+                if (profiling) {
+                    long chaseStart = System.nanoTime();
+                    chaseTarget(cachedTarget);
+                    TargetingProfiler.recordCombatSample("chaseTargetTime", "chaseTargetCalls", System.nanoTime() - chaseStart, gameTime);
+                } else {
+                    chaseTarget(cachedTarget);
+                }
+            }
+        } finally {
+            if (profiling) {
+                TargetingProfiler.recordCombatSample("combatTickTime", "combatTicks", System.nanoTime() - combatStart, gameTime);
+            }
         }
     }
 
@@ -696,6 +1150,10 @@ public class ClaySoldierEntity extends Entity {
     }
 
     private boolean tryAcquireMount() {
+        if (getAiState() != SoldierAiState.IDLE) {
+            return false;
+        }
+
         if (getVehicle() != null) {
             return false;
         }
@@ -705,7 +1163,7 @@ public class ClaySoldierEntity extends Entity {
             return false;
         }
 
-        updateMountTargetCache();
+        cachedMountTarget = SoldierTargetingHelper.updateMountTargetCache(this, cachedMountTarget);
         if (cachedMountTarget == null) {
             return false;
         }
@@ -766,8 +1224,8 @@ public class ClaySoldierEntity extends Entity {
         }
     }
 
-    private void chaseTarget(ClaySoldierEntity target) {
-        Vec3 to = target.position().subtract(position());
+    private void chasePosition(Vec3 targetPos) {
+        Vec3 to = targetPos.subtract(position());
         Vec3 horizontal = new Vec3(to.x, 0.0, to.z);
         double lenSq = horizontal.lengthSqr();
         if (lenSq < 1.0E-6) {
@@ -794,14 +1252,12 @@ public class ClaySoldierEntity extends Entity {
             }
             obstructionTicks++;
 
-            // Bound repeated hops so soldiers cannot scale tall cliffs.
             double climbedHeight = getY() - obstructionBaseY;
             if (jumpAssistCooldown <= 0 && climbedHeight < CombatTuning.getMaxObstacleClimbHeight()) {
                 setDeltaMovement(getDeltaMovement().x, CombatTuning.getJumpAssistVelocity(), getDeltaMovement().z);
                 jumpAssistCooldown = JUMP_ASSIST_COOLDOWN_TICKS;
             }
 
-            // Lightweight obstacle avoidance: strafe around blocked faces to reduce wall-sticking.
             double dirSign = (((level().getGameTime() + getId()) / 10L) & 1L) == 0L ? 1.0 : -1.0;
             Vec3 strafe = new Vec3(-dir.z * CombatTuning.getObstacleStrafeStrength() * dirSign, 0.0,
                     dir.x * CombatTuning.getObstacleStrafeStrength() * dirSign);
@@ -810,7 +1266,25 @@ public class ClaySoldierEntity extends Entity {
             resetObstructionTracking();
         }
 
-        faceMovementOrTarget(target);
+        Vec3 move = getDeltaMovement();
+        double moveSq = move.x * move.x + move.z * move.z;
+        if (moveSq > 1.0E-6) {
+            float yaw = (float) (Math.atan2(move.z, move.x) * (180.0 / Math.PI)) - 90.0f;
+            setYRot(yaw);
+            setYHeadRot(yaw);
+            setYBodyRot(yaw);
+        } else {
+            double dx = targetPos.x - getX();
+            double dz = targetPos.z - getZ();
+            float yaw = (float) (Math.atan2(dz, dx) * (180.0 / Math.PI)) - 90.0f;
+            setYRot(yaw);
+            setYHeadRot(yaw);
+            setYBodyRot(yaw);
+        }
+    }
+
+    private void chaseTarget(ClaySoldierEntity target) {
+        chasePosition(target.position());
     }
 
     private void applyIdleBraking() {
@@ -898,98 +1372,30 @@ public class ClaySoldierEntity extends Entity {
         }
     }
 
-    private void updateTargetCache() {
-        if (isValidTarget(cachedTarget)) {
+
+
+    void onSoldierKilled(ServerLevel serverLevel) {
+        if (isNexusSummon()) {
+            discard();
             return;
         }
 
-        cachedTarget = null;
-        if (!shouldScanForTarget()) {
-            return;
-        }
-
-        AABB scanBox = getBoundingBox().inflate(TARGET_RANGE_XZ, TARGET_RANGE_Y, TARGET_RANGE_XZ);
-        List<ClaySoldierEntity> candidates = level().getEntitiesOfClass(
-                ClaySoldierEntity.class,
-                scanBox,
-                this::isValidTarget
-        );
-
-        double bestDistSq = Double.MAX_VALUE;
-        ClaySoldierEntity best = null;
-        for (ClaySoldierEntity candidate : candidates) {
-            double distSq = distanceToSqr(candidate);
-            if (distSq < bestDistSq) {
-                bestDistSq = distSq;
-                best = candidate;
-            }
-        }
-        cachedTarget = best;
-    }
-
-    private void updateMountTargetCache() {
-        if (isValidMountTarget(cachedMountTarget)) {
-            return;
-        }
-
-        cachedMountTarget = null;
-        if (!shouldScanForMount()) {
-            return;
-        }
-
-        AABB scanBox = getBoundingBox().inflate(MOUNT_SEARCH_RANGE, 1.2, MOUNT_SEARCH_RANGE);
-        List<BaseMountEntity> candidates = level().getEntitiesOfClass(
-            BaseMountEntity.class,
-            scanBox,
-            this::isValidMountTarget
-        );
-
-        double bestDistSq = Double.MAX_VALUE;
-        BaseMountEntity best = null;
-        for (BaseMountEntity candidate : candidates) {
-            double distSq = distanceToSqr(candidate);
-            if (distSq < bestDistSq) {
-                bestDistSq = distSq;
-                best = candidate;
-            }
-        }
-        cachedMountTarget = best;
-    }
-
-    private boolean shouldScanForMount() {
-        long gameTime = level().getGameTime();
-        return ((gameTime + getId()) % MOUNT_SCAN_INTERVAL) == 0;
-    }
-
-    private boolean isValidMountTarget(BaseMountEntity candidate) {
-        return candidate != null
-            && candidate.isAlive()
-            && !candidate.isRemoved()
-            && candidate.getMaxPassengers() > candidate.getPassengers().size()
-            && distanceToSqr(candidate) <= MOUNT_SEARCH_RANGE_SQ;
-    }
-
-    private boolean shouldScanForTarget() {
-        long gameTime = level().getGameTime();
-        return ((gameTime + getId()) % TARGET_SCAN_INTERVAL) == 0;
-    }
-
-    private boolean isValidTarget(ClaySoldierEntity candidate) {
-        return candidate != null
-                && candidate != this
-                && candidate.isAlive()
-                && !candidate.isRemoved()
-                && !candidate.isSoldierDead()
-                && candidate.getTeamId() != getTeamId()
-                && distanceToSqr(candidate) <= TARGET_RANGE_SQ;
-    }
-
-    private void onSoldierKilled(ServerLevel serverLevel) {
         ItemStack drop = new ItemStack(isBrickSoldier()
             ? ItemRegistry.BRICK_SOLDIER_DOLL
             : ItemRegistry.SOLDIER_DOLL);
-        SoldierDollItem.setTeamIdOnStack(drop, getTeamId());
+        if (getTeamId() != 0) {
+            SoldierDollItem.setTeamIdOnStack(drop, getTeamId());
+        }
+        DropStackMetadata.setSoldierUses(drop, DEFAULT_DOLL_RESURRECTION_USES);
+
         spawnAtLocation(serverLevel, drop);
+
+        if (hasUpgrade(UpgradeFlags.STICK)) {
+            ItemStack upgradeDrop = new ItemStack(Items.STICK);
+            DropStackMetadata.setUpgradeData(upgradeDrop, UpgradeFlags.STICK, Short.toUnsignedInt(this.stickUsesRemaining));
+            spawnAtLocation(serverLevel, upgradeDrop);
+        }
+
         discard();
     }
 
@@ -1002,6 +1408,20 @@ public class ClaySoldierEntity extends Entity {
         upgradeState.readFromStorage(input);
         long persisted = input.getLong("ActiveUpgrades").orElse(upgradeState.getRaw());
         setActiveUpgrades(persisted);
+        this.stickUsesRemaining = (short) input.getShortOr("StickUsesRemaining", hasUpgrade(UpgradeFlags.STICK) ? STICK_MAX_USES : (short) 0);
+        if (!hasUpgrade(UpgradeFlags.STICK)) {
+            this.stickUsesRemaining = 0;
+        }
+        String persistedNexusOriginId = input.getString("NexusOriginId").orElse(null);
+        if (persistedNexusOriginId != null && !persistedNexusOriginId.isBlank()) {
+            try {
+                nexusOriginId = UUID.fromString(persistedNexusOriginId);
+            } catch (IllegalArgumentException ignored) {
+                nexusOriginId = null;
+            }
+        } else {
+            nexusOriginId = null;
+        }
     }
 
     @Override
@@ -1011,6 +1431,10 @@ public class ClaySoldierEntity extends Entity {
         output.putByte("EntityFlags", getFlags());
         output.putByte("AiState", getAiState().id);
         output.putLong("ActiveUpgrades", activeUpgrades);
+        output.putShort("StickUsesRemaining", this.stickUsesRemaining);
+        if (nexusOriginId != null) {
+            output.putString("NexusOriginId", nexusOriginId.toString());
+        }
         upgradeState.writeToStorage(output);
     }
 
@@ -1024,13 +1448,27 @@ public class ClaySoldierEntity extends Entity {
     }
 
     @Override
+    public void remove(Entity.RemovalReason reason) {
+        if (registeredInSoldierIndex && !level().isClientSide()) {
+            SoldierIndex.get(level()).unregister(this);
+            registeredInSoldierIndex = false;
+        }
+        if (!level().isClientSide() && (registeredInNexusIndex || (isNexusSummon() && nexusOriginId != null))) {
+            NexusSummonIndex.get(level()).unregister(this);
+            registeredInNexusIndex = false;
+        }
+        super.remove(reason);
+    }
+
+    @Override
     public boolean hurtServer(ServerLevel serverLevel, DamageSource source, float amount) {
         float resolvedAmount = amount;
         Entity attacker = source.getEntity();
         if (attacker instanceof Player) {
             resolvedAmount *= CombatTuning.getPlayerDamageMultiplier();
         }
-        applySoldierDamage(resolvedAmount, (byte) -1);
+        Entity knockbackSource = source.getDirectEntity() != null ? source.getDirectEntity() : attacker;
+        applySoldierDamage(resolvedAmount, (byte) -1, knockbackSource);
         return !isSoldierDead();
     }
 
