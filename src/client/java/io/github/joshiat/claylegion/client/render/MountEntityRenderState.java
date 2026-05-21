@@ -7,6 +7,7 @@ import net.minecraft.client.renderer.entity.state.EntityRenderState;
  */
 public class MountEntityRenderState extends EntityRenderState {
     public byte mountType = 0;
+    public byte variant = 0;
     public float renderYaw = 0.0f;
     public float horizontalSpeed = 0.0f;
     public float animTime = 0.0f;
