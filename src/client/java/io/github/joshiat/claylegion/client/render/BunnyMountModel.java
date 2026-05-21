@@ -12,7 +12,7 @@ import net.minecraft.util.Mth;
 
 /**
  * Port of OLD ModelBunnyMount with y_modern = 24 - y_1.7, xRot/zRot negated.
- * Texture: 16x16 sheet matching OLD bunny textures.
+ * Texture: 64x32 sheet matching bunny textures.
  */
 public class BunnyMountModel extends EntityModel<MountEntityRenderState> {
 
