@@ -96,6 +96,15 @@ public class ClayNexusBlock extends BaseEntityBlock implements EntityBlock {
             return InteractionResult.SUCCESS;
         }
 
+        // A stick acts as the commander's baton: cycle standing orders (issue #32).
+        if (stack.is(Items.STICK)) {
+            if (!level.isClientSide()) {
+                nexus.cycleOrder();
+                sendFeedback(player, nexus, "Orders");
+            }
+            return InteractionResult.SUCCESS;
+        }
+
         return InteractionResult.PASS;
     }
 

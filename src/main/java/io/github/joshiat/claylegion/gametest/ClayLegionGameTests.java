@@ -427,6 +427,90 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
+    // ── Nexus orders (issue #32) ───────────────────────────────────────────
+
+    @GameTest(structure = ARENA, maxTicks = 100)
+    public void holdOrderStandsGround(GameTestHelper helper) {
+        ClaySoldierEntity holder = spawnSoldier(helper, 1);
+        holder.setNexusOrder(io.github.joshiat.claylegion.entity.NexusOrder.HOLD);
+
+        ClaySoldierEntity bait = spawnSoldier(helper, 2);
+        bait.setPos(holder.getX() + 2.5, holder.getY(), holder.getZ());
+        bait.forceEquipUpgrade(UpgradeFlags.WHEAT);
+
+        double startX = holder.getX();
+        double startZ = holder.getZ();
+
+        helper.runAfterDelay(50, () -> {
+            double driftSq = (holder.getX() - startX) * (holder.getX() - startX)
+                + (holder.getZ() - startZ) * (holder.getZ() - startZ);
+            if (driftSq > 0.5 * 0.5) {
+                helper.fail("Hold order should keep the soldier at its post, drifted "
+                    + Math.sqrt(driftSq) + " blocks");
+                return;
+            }
+            helper.succeed();
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 120)
+    public void guardOrderReturnsTowardHome(GameTestHelper helper) {
+        ClaySoldierEntity guard = spawnSoldier(helper, 1);
+        guard.setNexusOrder(io.github.joshiat.claylegion.entity.NexusOrder.GUARD);
+
+        // Home is far outside the guard radius: the soldier should walk toward it.
+        BlockPos home = guard.blockPosition().offset(20, 0, 0);
+        guard.setNexusHomePos(home);
+        double startDistSq = home.distToCenterSqr(guard.position());
+
+        helper.runAfterDelay(60, () -> {
+            double nowDistSq = home.distToCenterSqr(guard.position());
+            if (nowDistSq >= startDistSq - 1.0) {
+                helper.fail("Guard should move toward its home anchor, started "
+                    + Math.sqrt(startDistSq) + " now " + Math.sqrt(nowDistSq));
+                return;
+            }
+            helper.succeed();
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 200)
+    public void nexusOrdersPropagateToLiveSummons(GameTestHelper helper) {
+        BlockPos nexusPos = new BlockPos(1, 0, 1);
+        helper.setBlock(nexusPos, io.github.joshiat.claylegion.registry.BlockRegistry.CLAY_NEXUS);
+
+        if (!(helper.getLevel().getBlockEntity(helper.absolutePos(nexusPos))
+            instanceof io.github.joshiat.claylegion.block.entity.ClayNexusBlockEntity nexus)) {
+            helper.fail("Clay nexus block entity missing");
+            return;
+        }
+        nexus.setTemplateFromDoll(new ItemStack(ItemRegistry.SOLDIER_DOLL));
+
+        helper.succeedWhen(() -> {
+            List<ClaySoldierEntity> summons = helper.getLevel().getEntitiesOfClass(
+                ClaySoldierEntity.class, helper.getBounds().inflate(3.0), ClaySoldierEntity::isNexusSummon);
+            if (summons.isEmpty()) {
+                helper.fail("Nexus should spawn soldiers first");
+                return;
+            }
+
+            ClaySoldierEntity summon = summons.get(0);
+            if (summon.getNexusOrder() != io.github.joshiat.claylegion.entity.NexusOrder.MARCH) {
+                helper.fail("Summons should start under the default MARCH order");
+                return;
+            }
+
+            // Cycling re-issues the new order to living summons immediately.
+            if (nexus.cycleOrder() != io.github.joshiat.claylegion.entity.NexusOrder.GUARD) {
+                helper.fail("Order should cycle MARCH -> GUARD");
+                return;
+            }
+            if (summon.getNexusOrder() != io.github.joshiat.claylegion.entity.NexusOrder.GUARD) {
+                helper.fail("Existing summons must receive the new order immediately");
+            }
+        });
+    }
+
     // ── Combat status sync (issue #24) ─────────────────────────────────────
 
     @GameTest(structure = ARENA, maxTicks = 100)

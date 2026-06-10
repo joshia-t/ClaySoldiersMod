@@ -30,6 +30,9 @@ public class ClayNexusBlockEntity extends BlockEntity {
     private boolean templateBrick;
     // The nexus stays dormant until a soldier doll is inserted (issue #37).
     private boolean hasTemplate;
+    // Standing orders issued to all summons (issue #32).
+    private io.github.joshiat.claylegion.entity.NexusOrder order =
+        io.github.joshiat.claylegion.entity.NexusOrder.MARCH;
     private int maxSpawnLimit = ClayLegionConfig.getNexusMaxSpawnLimit();
     private int spawnDelay = DEFAULT_SPAWN_DELAY;
     private int spawnCount = ClayLegionConfig.getNexusMaxSpawnCount();
@@ -86,6 +89,23 @@ public class ClayNexusBlockEntity extends BlockEntity {
         return hasTemplate;
     }
 
+    public io.github.joshiat.claylegion.entity.NexusOrder getOrder() {
+        return order;
+    }
+
+    /**
+     * Cycles March → Guard → Hold and re-issues the order to every living
+     * summon immediately (issue #32).
+     */
+    public io.github.joshiat.claylegion.entity.NexusOrder cycleOrder() {
+        order = order.next();
+        setChanged();
+        if (level instanceof ServerLevel serverLevel) {
+            NexusSummonIndex.get(serverLevel).forEachActive(nexusId, s -> s.setNexusOrder(order));
+        }
+        return order;
+    }
+
     public int getTemplateTeamId() {
         return templateTeamId;
     }
@@ -102,6 +122,7 @@ public class ClayNexusBlockEntity extends BlockEntity {
 
     public String describeSettings() {
         return (hasTemplate ? "team=" + templateTeamId + (templateBrick ? " brick" : "") : "dormant (insert a doll)")
+            + ", order=" + order.name().toLowerCase(java.util.Locale.ROOT)
             + ", limit=" + maxSpawnLimit
             + ", delay=" + spawnDelay
             + ", count=" + spawnCount
@@ -136,6 +157,7 @@ public class ClayNexusBlockEntity extends BlockEntity {
         templateTeamId = input.getInt("TemplateTeamId").orElse(0);
         templateBrick = input.getBooleanOr("TemplateBrick", false);
         hasTemplate = input.getBooleanOr("HasTemplate", false);
+        order = io.github.joshiat.claylegion.entity.NexusOrder.fromId(input.getByteOr("Order", (byte) 0));
         maxSpawnLimit = input.getInt("MaxSpawnLimit").orElse(ClayLegionConfig.getNexusMaxSpawnLimit());
         spawnDelay = input.getInt("SpawnDelay").orElse(DEFAULT_SPAWN_DELAY);
         spawnCount = input.getInt("SpawnCount").orElse(ClayLegionConfig.getNexusMaxSpawnCount());
@@ -166,6 +188,7 @@ public class ClayNexusBlockEntity extends BlockEntity {
         output.putInt("TemplateTeamId", templateTeamId);
         output.putBoolean("TemplateBrick", templateBrick);
         output.putBoolean("HasTemplate", hasTemplate);
+        output.putByte("Order", order.id);
         output.putInt("MaxSpawnLimit", maxSpawnLimit);
         output.putInt("SpawnDelay", spawnDelay);
         output.putInt("SpawnCount", spawnCount);
@@ -237,6 +260,8 @@ public class ClayNexusBlockEntity extends BlockEntity {
             soldier.setBrickSoldier(templateBrick);
             soldier.setNexusSummon(true);
             soldier.setNexusOriginId(nexusId);
+            soldier.setNexusOrder(order);
+            soldier.setNexusHomePos(worldPosition);
             soldier.setYRot(serverLevel.getRandom().nextFloat() * 360.0f);
             soldier.setXRot(0.0f);
             boolean spawned = serverLevel.addFreshEntity(soldier);
