@@ -333,6 +333,100 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
+    // ── Clay Nexus (issues #37, #33) ───────────────────────────────────────
+
+    @GameTest(structure = ARENA, maxTicks = 130)
+    public void nexusStaysDormantUntilDollInserted(GameTestHelper helper) {
+        // Floor slot: the harness seals the structure with barriers, so the
+        // spawn space above the nexus must stay inside the arena airspace.
+        BlockPos nexusPos = new BlockPos(1, 0, 1);
+        helper.setBlock(nexusPos, io.github.joshiat.claylegion.registry.BlockRegistry.CLAY_NEXUS);
+
+        helper.runAfterDelay(100, () -> {
+            List<ClaySoldierEntity> spawned = helper.getLevel().getEntitiesOfClass(
+                ClaySoldierEntity.class, helper.getBounds().inflate(3.0), e -> true);
+            if (!spawned.isEmpty()) {
+                helper.fail("Dormant nexus must not spawn soldiers, found " + spawned.size());
+                return;
+            }
+            helper.succeed();
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 200)
+    public void nexusSpawnsAfterDollInsertedAndKillsSummonsOnRemoval(GameTestHelper helper) {
+        BlockPos nexusPos = new BlockPos(1, 0, 1);
+        helper.setBlock(nexusPos, io.github.joshiat.claylegion.registry.BlockRegistry.CLAY_NEXUS);
+
+        if (!(helper.getLevel().getBlockEntity(helper.absolutePos(nexusPos))
+            instanceof io.github.joshiat.claylegion.block.entity.ClayNexusBlockEntity nexus)) {
+            helper.fail("Clay nexus block entity missing");
+            return;
+        }
+        nexus.setTemplateFromDoll(new ItemStack(ItemRegistry.SOLDIER_DOLL));
+
+        helper.succeedWhen(() -> {
+            List<ClaySoldierEntity> summons = helper.getLevel().getEntitiesOfClass(
+                ClaySoldierEntity.class, helper.getBounds().inflate(3.0), ClaySoldierEntity::isNexusSummon);
+            if (summons.isEmpty()) {
+                helper.fail("Nexus with template should spawn soldiers");
+                return;
+            }
+
+            // Removing the block must take its summons with it (issue #33).
+            helper.setBlock(nexusPos, net.minecraft.world.level.block.Blocks.AIR);
+            List<ClaySoldierEntity> survivors = helper.getLevel().getEntitiesOfClass(
+                ClaySoldierEntity.class, helper.getBounds().inflate(3.0),
+                s -> s.isNexusSummon() && !s.isRemoved());
+            if (!survivors.isEmpty()) {
+                helper.fail("Destroying the nexus must remove its summons, " + survivors.size() + " survived");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA)
+    public void clayHutFeatureBuildsWithDormantNexus(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        // The arena floor (3x3) is too small for the 5x5 hut footprint, so
+        // lay a solid 7x7 pad just outside and build there.
+        BlockPos pad = helper.absolutePos(new BlockPos(1, 0, 1)).offset(8, 0, 8);
+        for (int x = -1; x < 6; x++) {
+            for (int z = -1; z < 6; z++) {
+                level.setBlock(pad.offset(x, -1, z),
+                    net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(), 3);
+            }
+        }
+
+        boolean placed = io.github.joshiat.claylegion.registry.FeatureRegistry.CLAY_HUT.place(
+            new net.minecraft.world.level.levelgen.feature.FeaturePlaceContext<>(
+                java.util.Optional.empty(),
+                level,
+                level.getChunkSource().getGenerator(),
+                level.getRandom(),
+                pad,
+                net.minecraft.world.level.levelgen.feature.configurations.NoneFeatureConfiguration.INSTANCE));
+
+        if (!placed) {
+            helper.fail("Clay hut feature refused to place on solid ground");
+            return;
+        }
+        if (!level.getBlockState(pad.offset(2, 0, 2))
+            .is(io.github.joshiat.claylegion.registry.BlockRegistry.CLAY_NEXUS)) {
+            helper.fail("Clay hut should contain the nexus at its center");
+            return;
+        }
+        if (!level.getBlockState(pad.offset(0, 0, 0)).is(net.minecraft.world.level.block.Blocks.TERRACOTTA)) {
+            helper.fail("Clay hut walls missing");
+            return;
+        }
+        if (!level.getBlockState(pad.offset(2, 0, 4)).isAir()
+            || !level.getBlockState(pad.offset(2, 1, 4)).isAir()) {
+            helper.fail("Clay hut doorway missing");
+            return;
+        }
+        helper.succeed();
+    }
+
     // ── Combat status sync (issue #24) ─────────────────────────────────────
 
     @GameTest(structure = ARENA, maxTicks = 100)

@@ -1,8 +1,64 @@
 {
-  "parent": "minecraft:block/cube_bottom_top",
+  "parent": "minecraft:block/block",
   "textures": {
-    "bottom": "minecraft:block/clay",
-    "top": "minecraft:block/white_glazed_terracotta",
-    "side": "minecraft:block/terracotta"
-  }
+    "particle": "minecraft:block/clay",
+    "base": "minecraft:block/obsidian",
+    "column": "minecraft:block/clay",
+    "cap": "minecraft:block/terracotta",
+    "glow": "minecraft:block/white_glazed_terracotta",
+    "crystal": "minecraft:block/glowstone"
+  },
+  "elements": [
+    {
+      "name": "base",
+      "from": [0, 0, 0],
+      "to": [16, 4, 16],
+      "faces": {
+        "down":  {"texture": "#base", "cullface": "down"},
+        "up":    {"texture": "#base"},
+        "north": {"texture": "#base", "cullface": "north"},
+        "south": {"texture": "#base", "cullface": "south"},
+        "west":  {"texture": "#base", "cullface": "west"},
+        "east":  {"texture": "#base", "cullface": "east"}
+      }
+    },
+    {
+      "name": "column",
+      "from": [4, 4, 4],
+      "to": [12, 10, 12],
+      "faces": {
+        "up":    {"texture": "#column"},
+        "north": {"texture": "#column"},
+        "south": {"texture": "#column"},
+        "west":  {"texture": "#column"},
+        "east":  {"texture": "#column"}
+      }
+    },
+    {
+      "name": "cap",
+      "from": [1, 10, 1],
+      "to": [15, 13, 15],
+      "faces": {
+        "down":  {"texture": "#cap"},
+        "up":    {"texture": "#glow"},
+        "north": {"texture": "#cap"},
+        "south": {"texture": "#cap"},
+        "west":  {"texture": "#cap"},
+        "east":  {"texture": "#cap"}
+      }
+    },
+    {
+      "name": "crystal",
+      "from": [6, 13, 6],
+      "to": [10, 16, 10],
+      "shade": false,
+      "faces": {
+        "up":    {"texture": "#crystal"},
+        "north": {"texture": "#crystal"},
+        "south": {"texture": "#crystal"},
+        "west":  {"texture": "#crystal"},
+        "east":  {"texture": "#crystal"}
+      }
+    }
+  ]
 }

@@ -21,6 +21,10 @@ public final class BlockRegistry {
         BlockBehaviour.Properties.of()
             .strength(1.5f, 6.0f)
             .sound(SoundType.STONE)
+            // The pedestal model is not a full cube; without this, neighbors
+            // cull faces against it and x-ray holes appear (issue #30).
+            .noOcclusion()
+            .lightLevel(state -> 7)
             .setId(CLAY_NEXUS_KEY)
     );
 

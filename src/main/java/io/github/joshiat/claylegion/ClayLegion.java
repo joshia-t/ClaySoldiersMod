@@ -19,6 +19,7 @@ import io.github.joshiat.claylegion.registry.BlockEntityRegistry;
 import io.github.joshiat.claylegion.registry.BlockRegistry;
 import io.github.joshiat.claylegion.registry.CreativeTabRegistry;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
+import io.github.joshiat.claylegion.registry.FeatureRegistry;
 import io.github.joshiat.claylegion.registry.ItemRegistry;
 import io.github.joshiat.claylegion.render.RenderTuning;
 import net.fabricmc.api.ModInitializer;
@@ -59,6 +60,7 @@ public class ClayLegion implements ModInitializer {
 		EntityRegistry.init();
 		ItemRegistry.init();
 		CreativeTabRegistry.init();
+		FeatureRegistry.init();
 		ClayLegionConfig.loadAndApply(LOGGER);
 		registerPackets();
 		registerCommands();
