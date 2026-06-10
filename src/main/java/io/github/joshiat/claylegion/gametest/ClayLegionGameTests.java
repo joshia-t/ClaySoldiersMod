@@ -427,6 +427,32 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
+    @GameTest(structure = ARENA)
+    public void soldiersBlockBlockPlacement(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 0);
+        BlockPos occupied = soldier.blockPosition();
+
+        boolean unobstructed = helper.getLevel().isUnobstructed(
+            net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(),
+            occupied,
+            net.minecraft.world.phys.shapes.CollisionContext.empty());
+        if (unobstructed) {
+            helper.fail("Block placement should be obstructed by a clay soldier (issue #34)");
+            return;
+        }
+
+        soldier.discard();
+        boolean clearAfter = helper.getLevel().isUnobstructed(
+            net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(),
+            occupied,
+            net.minecraft.world.phys.shapes.CollisionContext.empty());
+        if (!clearAfter) {
+            helper.fail("Placement should be allowed again once the soldier is gone");
+            return;
+        }
+        helper.succeed();
+    }
+
     // ── Nexus orders (issue #32) ───────────────────────────────────────────
 
     @GameTest(structure = ARENA, maxTicks = 100)

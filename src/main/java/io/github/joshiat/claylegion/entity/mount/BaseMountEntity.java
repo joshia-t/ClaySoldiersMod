@@ -44,6 +44,8 @@ public abstract class BaseMountEntity extends Entity {
 
     public BaseMountEntity(EntityType<? extends BaseMountEntity> type, Level level) {
         super(type, level);
+        // Blocks cannot be placed inside mounts, matching vanilla mobs (issue #34).
+        this.blocksBuilding = true;
     }
 
     @Override

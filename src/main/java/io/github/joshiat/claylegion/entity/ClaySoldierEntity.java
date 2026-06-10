@@ -215,6 +215,9 @@ public class ClaySoldierEntity extends Entity {
 
     public ClaySoldierEntity(EntityType<? extends ClaySoldierEntity> type, Level level) {
         super(type, level);
+        // Vanilla only refuses block placement inside entities that block
+        // building; base Entity defaults to false (issue #34).
+        this.blocksBuilding = true;
     }
 
     @Override
