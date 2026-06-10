@@ -75,7 +75,9 @@ public class ClaySoldierEntity extends Entity {
 
     public static final float MAX_HEALTH = 20.0f;
     private static final float ATTACK_DAMAGE = 1.0f;
-    private static final int DEFAULT_DOLL_RESURRECTION_USES = 1;
+    // How many times a soldier can be revived from its doll before the doll is
+    // spent — prevents infinite battlefield resurrection loops (issue #8).
+    public static final int DEFAULT_RESURRECTION_BUDGET = 3;
 
     // Issue #18 upgrade tuning constants.
     private static final float LOW_HEALTH_FRACTION = 0.25f;
@@ -179,6 +181,8 @@ public class ClaySoldierEntity extends Entity {
     private ClaySoldierEntity cachedKing;
     // True while a player remote-controls this soldier; AI is suspended. Transient.
     private boolean possessed;
+    // Remaining doll revivals this soldier carries into its next death (issue #8).
+    private int resurrectionUsesRemaining = DEFAULT_RESURRECTION_BUDGET;
     private double targetMemoryX;
     private double targetMemoryY;
     private double targetMemoryZ;
@@ -772,6 +776,12 @@ public class ClaySoldierEntity extends Entity {
             return false;
         }
 
+        // Doll durability (issue #8): a spent doll can never be revived again.
+        int remainingRevivals = DropStackMetadata.getSoldierUsesOrDefault(stack, DEFAULT_RESURRECTION_BUDGET);
+        if (remainingRevivals <= 0) {
+            return false;
+        }
+
         boolean zombify = hasUpgrade(UpgradeFlags.ENDER_PEARL)
             && !DropStackMetadata.isZombificationBlocked(stack);
         long reviverFlag;
@@ -801,10 +811,21 @@ public class ClaySoldierEntity extends Entity {
             consumeUpgradeUse(reviverFlag);
         }
         revived.setBrickSoldier(isBrickDoll);
+        // Each revival consumes one use of the doll's resurrection budget.
+        revived.setResurrectionUsesRemaining(remainingRevivals - 1);
         revived.setPos(itemEntity.getX(), itemEntity.getY(), itemEntity.getZ());
         revived.setYRot(level().getRandom().nextFloat() * 360f);
         level().addFreshEntity(revived);
         return true;
+    }
+
+    /** Remaining doll revivals this soldier will carry onto its death drop. */
+    public int getResurrectionUsesRemaining() {
+        return resurrectionUsesRemaining;
+    }
+
+    public void setResurrectionUsesRemaining(int uses) {
+        this.resurrectionUsesRemaining = Math.max(0, uses);
     }
 
     public ClaySoldierEntity getCachedTarget() {
@@ -2239,7 +2260,7 @@ public class ClaySoldierEntity extends Entity {
         if (getTeamId() != 0) {
             SoldierDollItem.setTeamIdOnStack(drop, getTeamId());
         }
-        DropStackMetadata.setSoldierUses(drop, DEFAULT_DOLL_RESURRECTION_USES);
+        DropStackMetadata.setSoldierUses(drop, resurrectionUsesRemaining);
         if (hasUpgrade(UpgradeFlags.WHEAT_SEEDS)) {
             // Wheat seeds immunity persists onto the doll: it can't be zombified.
             DropStackMetadata.setZombificationBlocked(drop);
@@ -2307,6 +2328,7 @@ public class ClaySoldierEntity extends Entity {
         zombieDecayTicks = input.getIntOr("ZombieDecayTicks",
             hasUpgrade(UpgradeFlags.ENDER_PEARL) ? ZOMBIE_DECAY_TICKS : -1);
         foodHealNutrition = input.getByteOr("FoodHealNutrition", (byte) 4);
+        resurrectionUsesRemaining = input.getIntOr("ResurrectionUses", DEFAULT_RESURRECTION_BUDGET);
         String persistedNexusOriginId = input.getString("NexusOriginId").orElse(null);
         if (persistedNexusOriginId != null && !persistedNexusOriginId.isBlank()) {
             try {
@@ -2347,6 +2369,7 @@ public class ClaySoldierEntity extends Entity {
             output.putInt("ZombieDecayTicks", zombieDecayTicks);
         }
         output.putByte("FoodHealNutrition", foodHealNutrition);
+        output.putInt("ResurrectionUses", resurrectionUsesRemaining);
         if (nexusOriginId != null) {
             output.putString("NexusOriginId", nexusOriginId.toString());
         }

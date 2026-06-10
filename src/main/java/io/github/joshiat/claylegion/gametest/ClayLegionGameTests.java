@@ -2,6 +2,7 @@ package io.github.joshiat.claylegion.gametest;
 
 import com.mojang.authlib.GameProfile;
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
+import io.github.joshiat.claylegion.entity.drop.DropStackMetadata;
 import io.github.joshiat.claylegion.entity.possession.SoldierPossessionManager;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeRegistry;
@@ -21,6 +22,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -202,6 +204,54 @@ public final class ClayLegionGameTests {
         }
 
         helper.succeed();
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 100)
+    public void dollResurrectionBudgetIsFiniteAndDecrements(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        Vec3 center = helper.absoluteVec(Vec3.atCenterOf(SPAWN));
+
+        // A spent doll (0 revivals left) must never be revived.
+        ClaySoldierEntity medic = spawnSoldier(helper, 3);
+        medic.forceEquipUpgrade(UpgradeFlags.CLAY_BALL);
+
+        ItemStack spentDoll = new ItemStack(ItemRegistry.SOLDIER_DOLL);
+        SoldierDollItem.setTeamIdOnStack(spentDoll, 3);
+        DropStackMetadata.setSoldierUses(spentDoll, 0);
+        ItemEntity spentDrop = new ItemEntity(level, center.x, center.y, center.z, spentDoll);
+        spentDrop.setDeltaMovement(Vec3.ZERO);
+        level.addFreshEntity(spentDrop);
+
+        // A doll with one revival left revives once, and the revived soldier
+        // carries a budget of zero into its next death.
+        ItemStack lastUseDoll = new ItemStack(ItemRegistry.SOLDIER_DOLL);
+        SoldierDollItem.setTeamIdOnStack(lastUseDoll, 3);
+        DropStackMetadata.setSoldierUses(lastUseDoll, 1);
+        ItemEntity lastUseDrop = new ItemEntity(level, center.x, center.y, center.z, lastUseDoll);
+        lastUseDrop.setDeltaMovement(Vec3.ZERO);
+        level.addFreshEntity(lastUseDrop);
+
+        helper.runAfterDelay(60, () -> {
+            List<ClaySoldierEntity> revived = level.getEntitiesOfClass(
+                ClaySoldierEntity.class,
+                medic.getBoundingBox().inflate(4.0),
+                s -> s != medic && s.getTeamId() == 3
+            );
+            if (revived.size() != 1) {
+                helper.fail("Expected exactly one revival from the 1-use doll, got " + revived.size());
+                return;
+            }
+            if (revived.get(0).getResurrectionUsesRemaining() != 0) {
+                helper.fail("Revived soldier should carry a depleted resurrection budget, got "
+                    + revived.get(0).getResurrectionUsesRemaining());
+                return;
+            }
+            if (!spentDrop.isAlive()) {
+                helper.fail("Spent doll must not be consumed");
+                return;
+            }
+            helper.succeed();
+        });
     }
 
     // ── Possession ─────────────────────────────────────────────────────────
