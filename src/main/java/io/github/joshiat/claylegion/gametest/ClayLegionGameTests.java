@@ -453,6 +453,78 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
+    // ── Loot seeking (issue #40) ───────────────────────────────────────────
+
+    // Loot/mount scans reach 8 blocks and gossip travels level-wide, so these
+    // AI tests use generous plot padding and test-unique team ids to stay
+    // isolated from neighboring test plots.
+
+    @GameTest(structure = ARENA, maxTicks = 150, padding = 10)
+    public void soldiersWalkToDistantUpgrades(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 30);
+
+        // Well outside the 0.55-block passive pickup radius, but inside the
+        // sealed arena (the harness walls the structure with barriers).
+        ItemEntity stick = new ItemEntity(helper.getLevel(),
+            soldier.getX() + 1.2, soldier.getY(), soldier.getZ(),
+            new ItemStack(Items.STICK));
+        stick.setDeltaMovement(Vec3.ZERO);
+        helper.getLevel().addFreshEntity(stick);
+
+        helper.succeedWhen(() -> {
+            if (!soldier.hasUpgrade(UpgradeFlags.STICK)) {
+                helper.fail("Soldier should walk to and equip the distant stick");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 150, padding = 10)
+    public void soldiersGearUpBeforePursuingDistantEnemies(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 31);
+
+        ClaySoldierEntity enemy = spawnSoldier(helper, 32);
+        enemy.setPos(soldier.getX() + 2.6, soldier.getY(), soldier.getZ() + 2.6);
+        enemy.forceEquipUpgrade(UpgradeFlags.WHEAT);
+        enemy.applyRoot();
+
+        ItemEntity stick = new ItemEntity(helper.getLevel(),
+            soldier.getX() - 1.2, soldier.getY(), soldier.getZ(),
+            new ItemStack(Items.STICK));
+        stick.setDeltaMovement(Vec3.ZERO);
+        helper.getLevel().addFreshEntity(stick);
+
+        helper.succeedWhen(() -> {
+            if (!soldier.hasUpgrade(UpgradeFlags.STICK)) {
+                helper.fail("Soldier should grab the stick before chasing the distant enemy");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 200, padding = 10)
+    public void soldiersMountUpEvenWithEnemiesAround(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 33);
+
+        ClaySoldierEntity enemy = spawnSoldier(helper, 34);
+        enemy.setPos(soldier.getX() + 2.6, soldier.getY(), soldier.getZ() + 2.6);
+        enemy.forceEquipUpgrade(UpgradeFlags.WHEAT);
+        enemy.applyRoot();
+
+        io.github.joshiat.claylegion.entity.mount.BaseMountEntity mount =
+            EntityRegistry.HORSE_MOUNT.create(helper.getLevel(), EntitySpawnReason.COMMAND);
+        if (mount == null) {
+            helper.fail("Failed to create horse mount");
+            return;
+        }
+        mount.setPos(soldier.getX() - 1.2, soldier.getY(), soldier.getZ());
+        helper.getLevel().addFreshEntity(mount);
+
+        helper.succeedWhen(() -> {
+            if (!soldier.isPassenger()) {
+                helper.fail("Soldier should board the nearby mount despite the distant enemy");
+            }
+        });
+    }
+
     // ── Environmental damage (issue #38) ───────────────────────────────────
 
     @GameTest(structure = ARENA, maxTicks = 120)
@@ -552,12 +624,12 @@ public final class ClayLegionGameTests {
 
     // ── Nexus orders (issue #32) ───────────────────────────────────────────
 
-    @GameTest(structure = ARENA, maxTicks = 100)
+    @GameTest(structure = ARENA, maxTicks = 100, padding = 10)
     public void holdOrderStandsGround(GameTestHelper helper) {
-        ClaySoldierEntity holder = spawnSoldier(helper, 1);
+        ClaySoldierEntity holder = spawnSoldier(helper, 35);
         holder.setNexusOrder(io.github.joshiat.claylegion.entity.NexusOrder.HOLD);
 
-        ClaySoldierEntity bait = spawnSoldier(helper, 2);
+        ClaySoldierEntity bait = spawnSoldier(helper, 36);
         bait.setPos(holder.getX() + 2.5, holder.getY(), holder.getZ());
         bait.forceEquipUpgrade(UpgradeFlags.WHEAT);
 
@@ -576,9 +648,9 @@ public final class ClayLegionGameTests {
         });
     }
 
-    @GameTest(structure = ARENA, maxTicks = 120)
+    @GameTest(structure = ARENA, maxTicks = 120, padding = 10)
     public void guardOrderReturnsTowardHome(GameTestHelper helper) {
-        ClaySoldierEntity guard = spawnSoldier(helper, 1);
+        ClaySoldierEntity guard = spawnSoldier(helper, 37);
         guard.setNexusOrder(io.github.joshiat.claylegion.entity.NexusOrder.GUARD);
 
         // Home is far outside the guard radius, due east. The arena wall stops
