@@ -1334,6 +1334,10 @@ public class ClaySoldierEntity extends Entity {
         }
         move(MoverType.SELF, getDeltaMovement());
 
+        // Vanilla only runs inside-block effects (lava burns, fire blocks,
+        // cactus pricks) for LivingEntity; plain entities must opt in (issue #38).
+        applyEffectsFromBlocks();
+
         if (physProfiling) {
             TargetingProfiler.recordCombatSample("soldierPhysicsTime", "soldierPhysicsTicks", System.nanoTime() - physicsStart, level().getGameTime());
         }
