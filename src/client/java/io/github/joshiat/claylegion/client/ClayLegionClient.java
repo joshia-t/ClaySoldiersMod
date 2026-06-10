@@ -33,6 +33,11 @@ public class ClayLegionClient implements ClientModInitializer {
 		EntityRendererRegistry.register(EntityRegistry.TURTLE_MOUNT, TurtleMountRenderer::new);
 		EntityRendererRegistry.register(EntityRegistry.BUNNY_MOUNT, BunnyMountRenderer::new);
 		EntityRendererRegistry.register(EntityRegistry.GECKO_MOUNT, GeckoMountRenderer::new);
+		// Nexus shows its spawn template above the block — issue #31.
+		net.fabricmc.fabric.api.client.rendering.v1.BlockEntityRendererRegistry.register(
+			io.github.joshiat.claylegion.registry.BlockEntityRegistry.CLAY_NEXUS,
+			io.github.joshiat.claylegion.client.render.ClayNexusRenderer::new);
+
 		// Projectiles render their thrown item (snowball-style) — issue #16.
 		EntityRendererRegistry.register(EntityRegistry.GRAVEL_PROJECTILE, ThrownItemRenderer::new);
 		EntityRendererRegistry.register(EntityRegistry.SNOW_PROJECTILE, ThrownItemRenderer::new);
