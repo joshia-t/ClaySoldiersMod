@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "group": "clay-legion:horse_doll",
+  "key": {
+    "M": "minecraft:carrot",
+    "S": "minecraft:soul_sand"
+  },
+  "pattern": [
+    "MSM",
+    "M M"
+  ],
+  "result": {
+    "count": 2,
+    "id": "clay-legion:carrot_horse_spawner"
+  }
+}

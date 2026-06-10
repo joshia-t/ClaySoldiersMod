@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "group": "clay-legion:pegasus_doll",
+  "key": {
+    "F": "minecraft:feather",
+    "M": "minecraft:dirt",
+    "S": "minecraft:soul_sand"
+  },
+  "pattern": [
+    " F ",
+    "MSM",
+    "M M"
+  ],
+  "result": {
+    "count": 2,
+    "id": "clay-legion:dirt_pegasus_spawner"
+  }
+}

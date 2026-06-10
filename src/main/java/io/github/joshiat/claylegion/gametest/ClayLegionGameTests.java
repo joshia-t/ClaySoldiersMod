@@ -333,6 +333,36 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
+    // ── Recipes (issue #21) ────────────────────────────────────────────────
+
+    @GameTest(structure = ARENA)
+    public void legacyRecipesAreLoaded(GameTestHelper helper) {
+        var recipeManager = helper.getLevel().getServer().getRecipeManager();
+
+        long modRecipes = recipeManager.getRecipes().stream()
+            .filter(holder -> holder.id().identifier().getNamespace().equals("clay-legion"))
+            .count();
+        if (modRecipes < 69) {
+            helper.fail("Expected at least 69 clay-legion recipes, found " + modRecipes);
+            return;
+        }
+
+        String[] representative = {
+            "soldier_dolls", "soldier_doll_team_red", "horse_doll_dirt", "pegasus_doll_cake",
+            "turtle_doll_cobble", "bunny_doll_pink", "gecko_doll_oak", "clay_nexus"
+        };
+        for (String path : representative) {
+            var key = net.minecraft.resources.ResourceKey.create(
+                net.minecraft.core.registries.Registries.RECIPE,
+                net.minecraft.resources.Identifier.fromNamespaceAndPath("clay-legion", path));
+            if (recipeManager.byKey(key).isEmpty()) {
+                helper.fail("Missing recipe clay-legion:" + path);
+                return;
+            }
+        }
+        helper.succeed();
+    }
+
     // ── Status effects (issue #20) ─────────────────────────────────────────
 
     @GameTest(structure = ARENA, maxTicks = 160)
