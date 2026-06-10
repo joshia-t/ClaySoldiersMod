@@ -1,7 +1,6 @@
 package io.github.joshiat.claylegion.client;
 
 import io.github.joshiat.claylegion.client.render.ClaySoldierEntityRenderer;
-import io.github.joshiat.claylegion.client.render.DebugPlaceholderEntityRenderer;
 import io.github.joshiat.claylegion.client.render.BunnyMountRenderer;
 import io.github.joshiat.claylegion.client.render.GeckoMountRenderer;
 import io.github.joshiat.claylegion.client.render.HorseMountRenderer;
@@ -16,6 +15,7 @@ import io.github.joshiat.claylegion.registry.EntityRegistry;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
+import net.minecraft.client.renderer.entity.ThrownItemRenderer;
 
 public class ClayLegionClient implements ClientModInitializer {
 	@Override
@@ -28,10 +28,11 @@ public class ClayLegionClient implements ClientModInitializer {
 		EntityRendererRegistry.register(EntityRegistry.TURTLE_MOUNT, TurtleMountRenderer::new);
 		EntityRendererRegistry.register(EntityRegistry.BUNNY_MOUNT, BunnyMountRenderer::new);
 		EntityRendererRegistry.register(EntityRegistry.GECKO_MOUNT, GeckoMountRenderer::new);
-		EntityRendererRegistry.register(EntityRegistry.GRAVEL_PROJECTILE, DebugPlaceholderEntityRenderer::new);
-		EntityRendererRegistry.register(EntityRegistry.SNOW_PROJECTILE, DebugPlaceholderEntityRenderer::new);
-		EntityRendererRegistry.register(EntityRegistry.FIRE_CHARGE_PROJECTILE, DebugPlaceholderEntityRenderer::new);
-		EntityRendererRegistry.register(EntityRegistry.EMERALD_PROJECTILE, DebugPlaceholderEntityRenderer::new);
+		// Projectiles render their thrown item (snowball-style) — issue #16.
+		EntityRendererRegistry.register(EntityRegistry.GRAVEL_PROJECTILE, ThrownItemRenderer::new);
+		EntityRendererRegistry.register(EntityRegistry.SNOW_PROJECTILE, ThrownItemRenderer::new);
+		EntityRendererRegistry.register(EntityRegistry.FIRE_CHARGE_PROJECTILE, ThrownItemRenderer::new);
+		EntityRendererRegistry.register(EntityRegistry.EMERALD_PROJECTILE, ThrownItemRenderer::new);
 
 		registerPacketReceivers();
 	}

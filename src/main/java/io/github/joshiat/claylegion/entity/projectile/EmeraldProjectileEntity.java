@@ -33,6 +33,11 @@ public class EmeraldProjectileEntity extends ClayProjectileEntity {
         return DAMAGE;
     }
 
+    @Override
+    protected net.minecraft.world.item.Item getRenderItem() {
+        return net.minecraft.world.item.Items.EMERALD;
+    }
+
     /** Emeralds punch through the first target and can strike a second (issue #15). */
     @Override
     protected int getMaxPierces() {

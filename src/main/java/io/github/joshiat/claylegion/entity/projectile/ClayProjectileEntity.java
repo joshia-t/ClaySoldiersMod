@@ -26,7 +26,8 @@ import net.minecraft.world.level.storage.ValueOutput;
  *  - Payload resolution: On EntityHitResult, verify target is a ClaySoldierEntity of opposing team.
  *  - Variants (Gravel, Snow, Fire Charge, Emerald) handled via enum/DataComponent, not separate classes.
  */
-public abstract class ClayProjectileEntity extends Entity {
+public abstract class ClayProjectileEntity extends Entity
+    implements net.minecraft.world.entity.projectile.ItemSupplier {
 
     private static final EntityDataAccessor<Byte> PROJECTILE_TYPE =
             SynchedEntityData.defineId(ClayProjectileEntity.class, EntityDataSerializers.BYTE);
@@ -49,6 +50,21 @@ public abstract class ClayProjectileEntity extends Entity {
     /** Number of extra targets the projectile passes through (0 = stops on first hit). */
     protected int getMaxPierces() {
         return 0;
+    }
+
+    /** Item rendered in flight by the vanilla ThrownItemRenderer (issue #16). */
+    protected net.minecraft.world.item.Item getRenderItem() {
+        return net.minecraft.world.item.Items.SNOWBALL;
+    }
+
+    private net.minecraft.world.item.ItemStack cachedRenderStack;
+
+    @Override
+    public net.minecraft.world.item.ItemStack getItem() {
+        if (cachedRenderStack == null) {
+            cachedRenderStack = new net.minecraft.world.item.ItemStack(getRenderItem());
+        }
+        return cachedRenderStack;
     }
 
     @Override
