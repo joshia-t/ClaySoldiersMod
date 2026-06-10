@@ -8,14 +8,19 @@ import io.github.joshiat.claylegion.client.render.MountEntityRenderer;
 import io.github.joshiat.claylegion.client.render.ModEntityModelLayers;
 import io.github.joshiat.claylegion.client.render.PegasusMountRenderer;
 import io.github.joshiat.claylegion.client.render.TurtleMountRenderer;
+import io.github.joshiat.claylegion.client.gui.LexiconScreen;
 import io.github.joshiat.claylegion.client.possession.PossessionClientState;
 import io.github.joshiat.claylegion.network.PossessionEndS2CPacket;
 import io.github.joshiat.claylegion.network.PossessionStartS2CPacket;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
+import io.github.joshiat.claylegion.registry.ItemRegistry;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
+import net.fabricmc.fabric.api.event.player.UseItemCallback;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.ThrownItemRenderer;
+import net.minecraft.world.InteractionResult;
 
 public class ClayLegionClient implements ClientModInitializer {
 	@Override
@@ -35,6 +40,19 @@ public class ClayLegionClient implements ClientModInitializer {
 		EntityRendererRegistry.register(EntityRegistry.EMERALD_PROJECTILE, ThrownItemRenderer::new);
 
 		registerPacketReceivers();
+		registerLexicon();
+	}
+
+	private static void registerLexicon() {
+		// Open the lexicon screen on right-click; the item is inert server-side.
+		UseItemCallback.EVENT.register((player, level, hand) -> {
+			if (level.isClientSide() && player.getItemInHand(hand).is(ItemRegistry.LEXICON)) {
+				Minecraft.getInstance().execute(() ->
+					Minecraft.getInstance().setScreen(new LexiconScreen()));
+				return InteractionResult.SUCCESS;
+			}
+			return InteractionResult.PASS;
+		});
 	}
 
 	private static void registerPacketReceivers() {

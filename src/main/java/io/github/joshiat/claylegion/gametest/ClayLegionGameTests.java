@@ -383,7 +383,7 @@ public final class ClayLegionGameTests {
 
         String[] representative = {
             "soldier_dolls", "soldier_doll_team_red", "horse_doll_dirt", "pegasus_doll_cake",
-            "turtle_doll_cobble", "bunny_doll_pink", "gecko_doll_oak", "clay_nexus"
+            "turtle_doll_cobble", "bunny_doll_pink", "gecko_doll_oak", "clay_nexus", "lexicon"
         };
         for (String path : representative) {
             var key = net.minecraft.resources.ResourceKey.create(
