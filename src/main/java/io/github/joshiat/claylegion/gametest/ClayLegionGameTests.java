@@ -427,14 +427,209 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
-    // ── Nexus orders (issue #32) ───────────────────────────────────────────
+    @GameTest(structure = ARENA)
+    public void soldiersBlockBlockPlacement(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 0);
+        BlockPos occupied = soldier.blockPosition();
+
+        boolean unobstructed = helper.getLevel().isUnobstructed(
+            net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(),
+            occupied,
+            net.minecraft.world.phys.shapes.CollisionContext.empty());
+        if (unobstructed) {
+            helper.fail("Block placement should be obstructed by a clay soldier (issue #34)");
+            return;
+        }
+
+        soldier.discard();
+        boolean clearAfter = helper.getLevel().isUnobstructed(
+            net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(),
+            occupied,
+            net.minecraft.world.phys.shapes.CollisionContext.empty());
+        if (!clearAfter) {
+            helper.fail("Placement should be allowed again once the soldier is gone");
+            return;
+        }
+        helper.succeed();
+    }
+
+    // ── Loot seeking (issue #40) ───────────────────────────────────────────
+
+    // Loot/mount scans reach 8 blocks and gossip travels level-wide, so these
+    // AI tests use generous plot padding and test-unique team ids to stay
+    // isolated from neighboring test plots.
+
+    @GameTest(structure = ARENA, maxTicks = 150, padding = 10)
+    public void soldiersWalkToDistantUpgrades(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 30);
+
+        // Well outside the 0.55-block passive pickup radius, but inside the
+        // sealed arena (the harness walls the structure with barriers).
+        ItemEntity stick = new ItemEntity(helper.getLevel(),
+            soldier.getX() + 1.2, soldier.getY(), soldier.getZ(),
+            new ItemStack(Items.STICK));
+        stick.setDeltaMovement(Vec3.ZERO);
+        helper.getLevel().addFreshEntity(stick);
+
+        helper.succeedWhen(() -> {
+            if (!soldier.hasUpgrade(UpgradeFlags.STICK)) {
+                helper.fail("Soldier should walk to and equip the distant stick");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 150, padding = 10)
+    public void soldiersGearUpBeforePursuingDistantEnemies(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 31);
+
+        ClaySoldierEntity enemy = spawnSoldier(helper, 32);
+        enemy.setPos(soldier.getX() + 2.6, soldier.getY(), soldier.getZ() + 2.6);
+        enemy.forceEquipUpgrade(UpgradeFlags.WHEAT);
+        enemy.applyRoot();
+
+        ItemEntity stick = new ItemEntity(helper.getLevel(),
+            soldier.getX() - 1.2, soldier.getY(), soldier.getZ(),
+            new ItemStack(Items.STICK));
+        stick.setDeltaMovement(Vec3.ZERO);
+        helper.getLevel().addFreshEntity(stick);
+
+        helper.succeedWhen(() -> {
+            if (!soldier.hasUpgrade(UpgradeFlags.STICK)) {
+                helper.fail("Soldier should grab the stick before chasing the distant enemy");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 200, padding = 10)
+    public void soldiersMountUpEvenWithEnemiesAround(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 33);
+
+        ClaySoldierEntity enemy = spawnSoldier(helper, 34);
+        enemy.setPos(soldier.getX() + 2.6, soldier.getY(), soldier.getZ() + 2.6);
+        enemy.forceEquipUpgrade(UpgradeFlags.WHEAT);
+        enemy.applyRoot();
+
+        io.github.joshiat.claylegion.entity.mount.BaseMountEntity mount =
+            EntityRegistry.HORSE_MOUNT.create(helper.getLevel(), EntitySpawnReason.COMMAND);
+        if (mount == null) {
+            helper.fail("Failed to create horse mount");
+            return;
+        }
+        mount.setPos(soldier.getX() - 1.2, soldier.getY(), soldier.getZ());
+        helper.getLevel().addFreshEntity(mount);
+
+        helper.succeedWhen(() -> {
+            if (!soldier.isPassenger()) {
+                helper.fail("Soldier should board the nearby mount despite the distant enemy");
+            }
+        });
+    }
+
+    // ── Environmental damage (issue #38) ───────────────────────────────────
+
+    @GameTest(structure = ARENA, maxTicks = 120)
+    public void lavaDamagesSoldiers(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 0);
+        soldier.applyRoot(); // keep it in the pool
+        helper.setBlock(new BlockPos(1, 1, 1), net.minecraft.world.level.block.Blocks.LAVA);
+
+        helper.succeedWhen(() -> {
+            if (soldier.getSoldierHealth() >= ClaySoldierEntity.MAX_HEALTH && !soldier.isRemoved()) {
+                helper.fail("Lava should damage soldiers");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 120)
+    public void burningDamagesSoldiers(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 0);
+        soldier.setRemainingFireTicks(100);
+
+        helper.succeedWhen(() -> {
+            if (soldier.getSoldierHealth() >= ClaySoldierEntity.MAX_HEALTH && !soldier.isRemoved()) {
+                helper.fail("Being on fire should damage soldiers");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 60)
+    public void lightningDamagesSoldiers(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 0);
+
+        net.minecraft.world.entity.LightningBolt bolt =
+            net.minecraft.world.entity.EntityType.LIGHTNING_BOLT.create(helper.getLevel(), EntitySpawnReason.COMMAND);
+        if (bolt == null) {
+            helper.fail("Failed to create lightning bolt");
+            return;
+        }
+        bolt.setPos(soldier.position());
+        soldier.thunderHit(helper.getLevel(), bolt);
+
+        helper.succeedWhen(() -> {
+            if (soldier.getSoldierHealth() >= ClaySoldierEntity.MAX_HEALTH && !soldier.isRemoved()) {
+                helper.fail("Lightning should damage soldiers");
+            }
+        });
+    }
 
     @GameTest(structure = ARENA, maxTicks = 100)
+    public void arrowsDamageSoldiers(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 0);
+        soldier.applyRoot();
+
+        net.minecraft.world.entity.projectile.arrow.Arrow arrow =
+            net.minecraft.world.entity.EntityType.ARROW.create(helper.getLevel(), EntitySpawnReason.COMMAND);
+        if (arrow == null) {
+            helper.fail("Failed to create arrow");
+            return;
+        }
+        arrow.setPos(soldier.getX() - 1.5, soldier.getY() + 0.3, soldier.getZ());
+        arrow.setDeltaMovement(1.2, 0.0, 0.0);
+        helper.getLevel().addFreshEntity(arrow);
+
+        helper.succeedWhen(() -> {
+            if (soldier.getSoldierHealth() >= ClaySoldierEntity.MAX_HEALTH && !soldier.isRemoved()) {
+                helper.fail("Arrows should damage soldiers");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 100)
+    public void splashPotionsAffectSoldiers(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 0);
+        soldier.applyRoot();
+
+        ItemStack potionStack = new ItemStack(net.minecraft.world.item.Items.SPLASH_POTION);
+        potionStack.set(net.minecraft.core.component.DataComponents.POTION_CONTENTS,
+            new net.minecraft.world.item.alchemy.PotionContents(
+                net.minecraft.world.item.alchemy.Potions.HARMING));
+
+        net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownSplashPotion potion =
+            net.minecraft.world.entity.EntityType.SPLASH_POTION.create(helper.getLevel(), EntitySpawnReason.COMMAND);
+        if (potion == null) {
+            helper.fail("Failed to create splash potion");
+            return;
+        }
+        potion.setItem(potionStack);
+        potion.setPos(soldier.getX(), soldier.getY() + 1.5, soldier.getZ());
+        potion.setDeltaMovement(0.0, -0.4, 0.0);
+        helper.getLevel().addFreshEntity(potion);
+
+        helper.succeedWhen(() -> {
+            if (soldier.getSoldierHealth() >= ClaySoldierEntity.MAX_HEALTH && !soldier.isRemoved()) {
+                helper.fail("Harming splash potions should damage soldiers");
+            }
+        });
+    }
+
+    // ── Nexus orders (issue #32) ───────────────────────────────────────────
+
+    @GameTest(structure = ARENA, maxTicks = 100, padding = 10)
     public void holdOrderStandsGround(GameTestHelper helper) {
-        ClaySoldierEntity holder = spawnSoldier(helper, 1);
+        ClaySoldierEntity holder = spawnSoldier(helper, 35);
         holder.setNexusOrder(io.github.joshiat.claylegion.entity.NexusOrder.HOLD);
 
-        ClaySoldierEntity bait = spawnSoldier(helper, 2);
+        ClaySoldierEntity bait = spawnSoldier(helper, 36);
         bait.setPos(holder.getX() + 2.5, holder.getY(), holder.getZ());
         bait.forceEquipUpgrade(UpgradeFlags.WHEAT);
 
@@ -453,24 +648,22 @@ public final class ClayLegionGameTests {
         });
     }
 
-    @GameTest(structure = ARENA, maxTicks = 120)
+    @GameTest(structure = ARENA, maxTicks = 120, padding = 10)
     public void guardOrderReturnsTowardHome(GameTestHelper helper) {
-        ClaySoldierEntity guard = spawnSoldier(helper, 1);
+        ClaySoldierEntity guard = spawnSoldier(helper, 37);
         guard.setNexusOrder(io.github.joshiat.claylegion.entity.NexusOrder.GUARD);
 
-        // Home is far outside the guard radius: the soldier should walk toward it.
+        // Home is far outside the guard radius, due east. The arena wall stops
+        // real progress, so assert directional intent: the guard presses east.
         BlockPos home = guard.blockPosition().offset(20, 0, 0);
         guard.setNexusHomePos(home);
-        double startDistSq = home.distToCenterSqr(guard.position());
+        double startX = guard.getX();
 
-        helper.runAfterDelay(60, () -> {
-            double nowDistSq = home.distToCenterSqr(guard.position());
-            if (nowDistSq >= startDistSq - 1.0) {
-                helper.fail("Guard should move toward its home anchor, started "
-                    + Math.sqrt(startDistSq) + " now " + Math.sqrt(nowDistSq));
-                return;
+        helper.succeedWhen(() -> {
+            if (guard.getX() < startX + 0.25) {
+                helper.fail("Guard should walk toward its home anchor, x moved "
+                    + (guard.getX() - startX));
             }
-            helper.succeed();
         });
     }
 

@@ -150,6 +150,9 @@ public class ClaySoldierEntity extends Entity {
     private static final int SEPARATION_UPDATE_INTERVAL = 4;
     private static final int UPGRADE_PICKUP_UPDATE_INTERVAL = 10;
     private static final double UPGRADE_PICKUP_RANGE = 0.55;
+    // Loot seeking (issue #40): how far soldiers will walk for gear.
+    private static final int ITEM_SEEK_SCAN_INTERVAL = 12;
+    private static final double ITEM_SEEK_RANGE = 8.0;
 
     private static final byte FLAG_BRICK = 0x02;
     private static final byte FLAG_NEXUS_SUMMON = 0x04;
@@ -190,6 +193,8 @@ public class ClaySoldierEntity extends Entity {
     private double airborneStartY = Double.NaN;
     private Monster cachedMobTarget;
     private ClaySoldierEntity cachedKing;
+    // Upgrade drop this soldier is walking toward (issue #40).
+    private ItemEntity cachedItemTarget;
     // True while a player remote-controls this soldier; AI is suspended. Transient.
     private boolean possessed;
     // Remaining doll revivals this soldier carries into its next death (issue #8).
@@ -215,6 +220,9 @@ public class ClaySoldierEntity extends Entity {
 
     public ClaySoldierEntity(EntityType<? extends ClaySoldierEntity> type, Level level) {
         super(type, level);
+        // Vanilla only refuses block placement inside entities that block
+        // building; base Entity defaults to false (issue #34).
+        this.blocksBuilding = true;
     }
 
     @Override
@@ -1331,6 +1339,10 @@ public class ClaySoldierEntity extends Entity {
         }
         move(MoverType.SELF, getDeltaMovement());
 
+        // Vanilla only runs inside-block effects (lava burns, fire blocks,
+        // cactus pricks) for LivingEntity; plain entities must opt in (issue #38).
+        applyEffectsFromBlocks();
+
         if (physProfiling) {
             TargetingProfiler.recordCombatSample("soldierPhysicsTime", "soldierPhysicsTicks", System.nanoTime() - physicsStart, level().getGameTime());
         }
@@ -1489,8 +1501,9 @@ public class ClaySoldierEntity extends Entity {
                 targetVisible = updateAwarenessAndTarget(gameTime);
             }
 
-            // Guard order: abandon any chase that strays too far from home (issue #32).
-            if (nexusOrder == NexusOrder.GUARD && nexusHomePos != null && cachedTarget != null
+            // Guard order: abandon any pursuit — direct target or gossip
+            // memory — that strays too far from home (issue #32).
+            if (nexusOrder == NexusOrder.GUARD && nexusHomePos != null
                 && nexusHomePos.distToCenterSqr(position()) > GUARD_MAX_PURSUIT_SQ) {
                 cachedTarget = null;
                 clearTargetMemory();
@@ -1536,6 +1549,11 @@ public class ClaySoldierEntity extends Entity {
                     if (tryHuntHostileMob(gameTime)) {
                         return;
                     }
+                }
+
+                // Loot priority (issue #40): walk to nearby gear before idling.
+                if (trySeekUpgradeItem(gameTime)) {
+                    return;
                 }
 
                 setAiState(SoldierAiState.IDLE);
@@ -1591,6 +1609,19 @@ public class ClaySoldierEntity extends Entity {
             }
 
             double distSq = distanceToSqr(cachedTarget);
+
+            // Loot priority (issue #40): unless the enemy is an immediate
+            // threat, gearing up beats pursuing it — grab nearby upgrades and
+            // free mounts first, then return to the fight better equipped.
+            if (distSq > IMMEDIATE_THREAT_RANGE * IMMEDIATE_THREAT_RANGE) {
+                if (trySeekUpgradeItem(gameTime)) {
+                    return;
+                }
+                if (!isPassenger() && !hasUpgrade(UpgradeFlags.BONE) && tryAcquireMountNow()) {
+                    return;
+                }
+            }
+
             if (distSq > ATTACK_RANGE_SQ && distSq <= RANGED_ATTACK_RANGE_SQ) {
                 boolean firedRanged;
                 if (profiling) {
@@ -2138,11 +2169,86 @@ public class ClaySoldierEntity extends Entity {
         return rootTicks > 0;
     }
 
+    /**
+     * Walk toward the nearest equipable upgrade drop (issue #40). The actual
+     * pickup still happens through the close-range scan once we arrive.
+     */
+    private boolean trySeekUpgradeItem(long gameTime) {
+        if (holdsPosition() || isMovementLocked()) {
+            return false;
+        }
+
+        if (cachedItemTarget != null
+            && (!cachedItemTarget.isAlive() || cachedItemTarget.isRemoved()
+                || !isDesirableLoot(cachedItemTarget.getItem())
+                || distanceToSqr(cachedItemTarget) > ITEM_SEEK_RANGE * ITEM_SEEK_RANGE * 4.0)) {
+            cachedItemTarget = null;
+        }
+
+        if (cachedItemTarget == null) {
+            if (Math.floorMod(gameTime + getId(), ITEM_SEEK_SCAN_INTERVAL) != 0) {
+                return false;
+            }
+            List<ItemEntity> drops = level().getEntitiesOfClass(
+                ItemEntity.class,
+                getBoundingBox().inflate(ITEM_SEEK_RANGE, 2.0, ITEM_SEEK_RANGE),
+                drop -> drop.isAlive() && !drop.isRemoved() && isDesirableLoot(drop.getItem())
+            );
+            ItemEntity best = null;
+            double bestSq = ITEM_SEEK_RANGE * ITEM_SEEK_RANGE;
+            for (int i = 0, size = drops.size(); i < size; i++) {
+                ItemEntity drop = drops.get(i);
+                double distSq = distanceToSqr(drop);
+                if (distSq < bestSq) {
+                    best = drop;
+                    bestSq = distSq;
+                }
+            }
+            cachedItemTarget = best;
+            if (cachedItemTarget == null) {
+                return false;
+            }
+        }
+
+        setAiState(SoldierAiState.CHASING);
+        chasePosition(cachedItemTarget.position());
+        return true;
+    }
+
+    /** True if the stack maps to an upgrade this soldier could equip right now. */
+    private boolean isDesirableLoot(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return false;
+        }
+        if (stack.is(Items.ARROW)) {
+            return !hasUpgrade(UpgradeFlags.STICK) || !hasUpgrade(UpgradeFlags.FLINT);
+        }
+
+        UpgradeSpec spec = UpgradeRegistry.getSpecFor(stack);
+        if (spec == null) {
+            return false;
+        }
+        if (spec.flag() == UpgradeFlags.SHEAR_RIGHT && hasUpgrade(UpgradeFlags.SHEAR_RIGHT)) {
+            spec = UpgradeRegistry.SHEAR_LEFT_SPEC;
+        }
+        if (!spec.canEquipOnto(activeUpgrades)) {
+            return false;
+        }
+        if (spec.slot().isExclusive() && isSlotOccupied(spec.slot())) {
+            return false;
+        }
+        return spec.flag() != UpgradeFlags.BONE || !isPassenger();
+    }
+
     private boolean tryAcquireMount() {
         if (getAiState() != SoldierAiState.IDLE) {
             return false;
         }
+        return tryAcquireMountNow();
+    }
 
+    /** Mount acquisition without the idle-state gate (loot priority, issue #40). */
+    private boolean tryAcquireMountNow() {
         if (getVehicle() != null) {
             return false;
         }

@@ -44,6 +44,8 @@ public abstract class BaseMountEntity extends Entity {
 
     public BaseMountEntity(EntityType<? extends BaseMountEntity> type, Level level) {
         super(type, level);
+        // Blocks cannot be placed inside mounts, matching vanilla mobs (issue #34).
+        this.blocksBuilding = true;
     }
 
     @Override
@@ -149,6 +151,10 @@ public abstract class BaseMountEntity extends Entity {
 
         setDeltaMovement(getDeltaMovement().multiply(DRAG, 1.0, DRAG));
         move(MoverType.SELF, getDeltaMovement());
+
+        // Vanilla only runs inside-block effects (lava, fire blocks) for
+        // LivingEntity; plain entities must opt in (issue #38).
+        applyEffectsFromBlocks();
     }
 
     protected void serverMountTick() {

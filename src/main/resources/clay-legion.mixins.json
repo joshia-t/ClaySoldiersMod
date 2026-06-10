@@ -5,7 +5,8 @@
 	"mixins": [
 		"ExampleMixin",
 		"ItemEntityPickupSanitizeMixin",
-		"PossessionInterceptMixin"
+		"PossessionInterceptMixin",
+		"PotionSplashSoldierMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
