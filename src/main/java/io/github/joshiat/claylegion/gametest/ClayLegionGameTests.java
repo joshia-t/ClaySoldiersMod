@@ -384,6 +384,49 @@ public final class ClayLegionGameTests {
         });
     }
 
+    @GameTest(structure = ARENA)
+    public void clayHutFeatureBuildsWithDormantNexus(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        // The arena floor (3x3) is too small for the 5x5 hut footprint, so
+        // lay a solid 7x7 pad just outside and build there.
+        BlockPos pad = helper.absolutePos(new BlockPos(1, 0, 1)).offset(8, 0, 8);
+        for (int x = -1; x < 6; x++) {
+            for (int z = -1; z < 6; z++) {
+                level.setBlock(pad.offset(x, -1, z),
+                    net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(), 3);
+            }
+        }
+
+        boolean placed = io.github.joshiat.claylegion.registry.FeatureRegistry.CLAY_HUT.place(
+            new net.minecraft.world.level.levelgen.feature.FeaturePlaceContext<>(
+                java.util.Optional.empty(),
+                level,
+                level.getChunkSource().getGenerator(),
+                level.getRandom(),
+                pad,
+                net.minecraft.world.level.levelgen.feature.configurations.NoneFeatureConfiguration.INSTANCE));
+
+        if (!placed) {
+            helper.fail("Clay hut feature refused to place on solid ground");
+            return;
+        }
+        if (!level.getBlockState(pad.offset(2, 0, 2))
+            .is(io.github.joshiat.claylegion.registry.BlockRegistry.CLAY_NEXUS)) {
+            helper.fail("Clay hut should contain the nexus at its center");
+            return;
+        }
+        if (!level.getBlockState(pad.offset(0, 0, 0)).is(net.minecraft.world.level.block.Blocks.TERRACOTTA)) {
+            helper.fail("Clay hut walls missing");
+            return;
+        }
+        if (!level.getBlockState(pad.offset(2, 0, 4)).isAir()
+            || !level.getBlockState(pad.offset(2, 1, 4)).isAir()) {
+            helper.fail("Clay hut doorway missing");
+            return;
+        }
+        helper.succeed();
+    }
+
     // ── Combat status sync (issue #24) ─────────────────────────────────────
 
     @GameTest(structure = ARENA, maxTicks = 100)
