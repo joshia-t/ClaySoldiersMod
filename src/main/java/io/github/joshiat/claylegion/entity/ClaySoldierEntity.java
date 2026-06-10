@@ -1119,6 +1119,18 @@ public class ClaySoldierEntity extends Entity {
         return true;
     }
 
+    /** Middle-click pick block returns the matching doll, team preserved (issue #12). */
+    @Override
+    public ItemStack getPickResult() {
+        ItemStack stack = new ItemStack(isBrickSoldier()
+            ? ItemRegistry.BRICK_SOLDIER_DOLL
+            : ItemRegistry.SOLDIER_DOLL);
+        if (getTeamId() != 0) {
+            SoldierDollItem.setTeamIdOnStack(stack, getTeamId());
+        }
+        return stack;
+    }
+
     @Override
     public InteractionResult interact(Player player, InteractionHand hand, Vec3 hitPos) {
         ItemStack held = player.getItemInHand(hand);

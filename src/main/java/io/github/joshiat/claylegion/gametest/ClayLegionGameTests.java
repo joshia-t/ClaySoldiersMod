@@ -6,7 +6,9 @@ import io.github.joshiat.claylegion.entity.possession.SoldierPossessionManager;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeRegistry;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeSpec;
+import io.github.joshiat.claylegion.item.SoldierDollItem;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
+import io.github.joshiat.claylegion.registry.ItemRegistry;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
@@ -177,6 +179,29 @@ public final class ClayLegionGameTests {
             }
             helper.succeed();
         });
+    }
+
+    @GameTest(structure = ARENA)
+    public void pickBlockReturnsTeamDoll(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 5);
+
+        ItemStack picked = soldier.getPickResult();
+        if (picked == null || !(picked.getItem() instanceof SoldierDollItem doll)) {
+            helper.fail("Pick block should return a soldier doll");
+            return;
+        }
+        if (doll.getTeamId(picked) != 5) {
+            helper.fail("Picked doll must preserve team id, got " + doll.getTeamId(picked));
+        }
+
+        ClaySoldierEntity brick = spawnSoldier(helper, 0);
+        brick.setBrickSoldier(true);
+        ItemStack pickedBrick = brick.getPickResult();
+        if (pickedBrick == null || !pickedBrick.is(ItemRegistry.BRICK_SOLDIER_DOLL)) {
+            helper.fail("Brick soldier pick block should return the brick doll");
+        }
+
+        helper.succeed();
     }
 
     // ── Possession ─────────────────────────────────────────────────────────
