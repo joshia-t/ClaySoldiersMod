@@ -141,7 +141,13 @@ public class ClaySoldierEntity extends Entity {
     private static final float GOSSIP_MIN_CHASE_STRENGTH = 0.18f;
     private static final int IMMEDIATE_THREAT_CHECK_INTERVAL = 2;
     private static final double IMMEDIATE_THREAT_RANGE = 2.0;
-    private static final double GOSSIP_MAX_RANGE_BLOCKS = 16.0 * 10.0;
+    // Swarm AI: the team-wide gossip pool only reaches nearby soldiers now.
+    // Distant armies learn about fights when runners physically carry the
+    // rumor to them (contact intel below), so scouting actually matters.
+    private static final double GOSSIP_MAX_RANGE_BLOCKS = 48.0;
+    private static final int CONTACT_INTEL_INTERVAL = 20;
+    private static final double CONTACT_INTEL_RANGE = 3.0;
+    private static final float CONTACT_INTEL_CONFIDENCE_DECAY = 0.85f;
     private static final double TARGET_MEMORY_REACHED_SQ = 1.2 * 1.2;
 
     private static final double CHASE_ACCEL = 0.05;
@@ -153,6 +159,12 @@ public class ClaySoldierEntity extends Entity {
     // Loot seeking (issue #40): how far soldiers will walk for gear.
     private static final int ITEM_SEEK_SCAN_INTERVAL = 12;
     private static final double ITEM_SEEK_RANGE = 8.0;
+    // Exploration mode tuning (swarm AI).
+    private static final int STUCK_TICKS_TO_EXPLORE = 40;
+    private static final double STUCK_MIN_GOAL_DIST_SQ = 9.0;
+    private static final int EXPLORE_TIMEOUT_TICKS = 1200;
+    private static final int EXPLORE_PROGRESS_TICKS_TO_EXIT = 100;
+    private static final double EXPLORE_GOAL_REACHED_SQ = 4.0;
 
     private static final byte FLAG_BRICK = 0x02;
     private static final byte FLAG_NEXUS_SUMMON = 0x04;
@@ -195,6 +207,24 @@ public class ClaySoldierEntity extends Entity {
     private ClaySoldierEntity cachedKing;
     // Upgrade drop this soldier is walking toward (issue #40).
     private ItemEntity cachedItemTarget;
+
+    // ── Ant-colony exploration mode (swarm AI) ─────────────────────────────
+    // Entered when a chase is stuck against geometry; the soldier walks
+    // straight lines cell-to-cell, stamping team-shared visited/blocked
+    // knowledge and flow vectors so the swarm learns the maze together.
+    private boolean exploring;
+    private byte exploreDir = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
+    private double exploreGoalX;
+    private double exploreGoalZ;
+    private long exploreLastCellKey = Long.MIN_VALUE;
+    private int exploreTicks;
+    private int exploreProgressTicks;
+    // Grace ticks after picking a heading: residual collision from the old
+    // heading must not instantly re-trigger a wall decision.
+    private int exploreCommitTicks;
+    private double exploreBestGoalDistSq;
+    private int stuckTicks;
+    private double stuckBaselineDistSq;
     // True while a player remote-controls this soldier; AI is suspended. Transient.
     private boolean possessed;
     // Remaining doll revivals this soldier carries into its next death (issue #8).
@@ -967,6 +997,22 @@ public class ClaySoldierEntity extends Entity {
         targetMemoryExpiryTick = Long.MIN_VALUE;
     }
 
+    /** Swap notes with teammates within touching distance (swarm AI). */
+    private void shareIntelWithNearbyAllies(long gameTime) {
+        List<ClaySoldierEntity> allies = level().getEntitiesOfClass(
+            ClaySoldierEntity.class,
+            getBoundingBox().inflate(CONTACT_INTEL_RANGE, 1.0, CONTACT_INTEL_RANGE),
+            mate -> mate != this && mate.isAlive() && !mate.isRemoved()
+                && !mate.isSoldierDead() && mate.getTeamId() == getTeamId()
+        );
+        for (int i = 0, size = allies.size(); i < size; i++) {
+            allies.get(i).noteEnemySighting(null,
+                targetMemoryX, targetMemoryY, targetMemoryZ,
+                targetMemoryConfidence * CONTACT_INTEL_CONFIDENCE_DECAY,
+                gameTime, false);
+        }
+    }
+
     private boolean hasTargetMemory(long gameTime) {
         return targetMemoryConfidence > 0.01f && gameTime <= targetMemoryExpiryTick;
     }
@@ -1023,6 +1069,7 @@ public class ClaySoldierEntity extends Entity {
         }
 
         chasePosition(memoryPos);
+        trackStuckTowardGoal(memoryPos.x, memoryPos.z);
         if (profiling) {
             TargetingProfiler.recordCombatSample("memoryChaseTime", "memoryChaseCalls", System.nanoTime() - start, gameTime);
         }
@@ -1478,6 +1525,13 @@ public class ClaySoldierEntity extends Entity {
                     getX(), getY() + 0.3, getZ(), 1, 0.05, 0.05, 0.05, 0.0);
             }
 
+            // Contact intel (swarm AI): a soldier carrying a fresh rumor swaps
+            // notes with any teammate it physically passes, so information
+            // travels with runners instead of teleporting across the map.
+            if (((gameTime + getId()) % CONTACT_INTEL_INTERVAL) == 0 && hasTargetMemory(gameTime)) {
+                shareIntelWithNearbyAllies(gameTime);
+            }
+
             if (tryPickupNearbyUpgrade(gameTime)) {
                 return;
             }
@@ -1507,6 +1561,22 @@ public class ClaySoldierEntity extends Entity {
                 && nexusHomePos.distToCenterSqr(position()) > GUARD_MAX_PURSUIT_SQ) {
                 cachedTarget = null;
                 clearTargetMemory();
+                if (exploring) {
+                    exitExploration();
+                }
+            }
+
+            // Exploration mode (swarm AI): a soldier learning a maze keeps at
+            // it unless an enemy becomes directly visible — fighting what you
+            // can see always outranks the map.
+            if (exploring) {
+                if (targetVisible && cachedTarget != null
+                    && distanceToSqr(cachedTarget) <= RANGED_ATTACK_RANGE_SQ) {
+                    exitExploration();
+                } else {
+                    exploreTick(gameTime);
+                    return;
+                }
             }
 
             if (cachedTarget == null) {
@@ -2417,6 +2487,234 @@ public class ClaySoldierEntity extends Entity {
 
     private void chaseTarget(ClaySoldierEntity target) {
         chasePosition(target.position());
+        trackStuckTowardGoal(target.getX(), target.getZ());
+    }
+
+    // ── Ant-colony exploration mode (swarm AI) ─────────────────────────────
+
+    /** True while the soldier is in exploration mode learning a maze. */
+    public boolean isExploring() {
+        return exploring;
+    }
+
+    /**
+     * Stuck detection: a chase that keeps colliding with geometry without
+     * closing distance to its goal flips the soldier into exploration mode.
+     * Jump-assist clears one-block obstacles, so only real walls accumulate.
+     */
+    private void trackStuckTowardGoal(double goalX, double goalZ) {
+        // Count any tick pressing into geometry — jump-assist hops keep the
+        // soldier airborne against tall walls, so grounded-only counting
+        // would never accumulate.
+        if (!horizontalCollision) {
+            if (stuckTicks > 0) {
+                stuckTicks--;
+            }
+            return;
+        }
+
+        double dx = goalX - getX();
+        double dz = goalZ - getZ();
+        double distSq = dx * dx + dz * dz;
+        if (stuckTicks == 0) {
+            stuckBaselineDistSq = distSq;
+        }
+        stuckTicks++;
+
+        // Windowed check: only a full window of collisions WITHOUT net
+        // progress counts as stuck — sliding along a wall restarts the window.
+        if (stuckTicks >= STUCK_TICKS_TO_EXPLORE) {
+            if (distSq > stuckBaselineDistSq - 2.0
+                && distSq > STUCK_MIN_GOAL_DIST_SQ
+                && !holdsPosition() && !isMovementLocked() && !isPassenger()) {
+                enterExploration(goalX, goalZ);
+            } else {
+                stuckTicks = 0;
+            }
+        }
+    }
+
+    private void enterExploration(double goalX, double goalZ) {
+        exploring = true;
+        exploreGoalX = goalX;
+        exploreGoalZ = goalZ;
+        exploreTicks = 0;
+        exploreProgressTicks = 0;
+        double dx = goalX - getX();
+        double dz = goalZ - getZ();
+        exploreBestGoalDistSq = dx * dx + dz * dz;
+        exploreDir = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
+        exploreLastCellKey = Long.MIN_VALUE;
+        stuckTicks = 0;
+        // Direct pursuit failed; the goal snapshot carries the intent instead.
+        cachedTarget = null;
+        clearTargetMemory();
+    }
+
+    private void exitExploration() {
+        exitExploration(false);
+    }
+
+    /**
+     * Leaves exploration mode. When progress caused the exit, the goal is
+     * restored as a rumor so the normal chase resumes — and if the soldier
+     * gets stuck again deeper in the maze, the next exploration continues
+     * from the swarm's accumulated map instead of starting cold.
+     */
+    private void exitExploration(boolean restoreGoalAsRumor) {
+        exploring = false;
+        exploreDir = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
+        stuckTicks = 0;
+        if (restoreGoalAsRumor) {
+            updateTargetMemory(exploreGoalX, getY(), exploreGoalZ, 0.6f, level().getGameTime());
+        }
+    }
+
+    /**
+     * One tick of ant-style exploration. The soldier commits to straight
+     * cardinal runs, re-deciding only on wall hits or when shared knowledge
+     * (flow vectors) says otherwise — O(1) map lookups, no pathfinding.
+     */
+    private void exploreTick(long gameTime) {
+        var nav = io.github.joshiat.claylegion.entity.nav.TeamNavIndex.get(level()).forTeam(getTeamId());
+
+        exploreTicks++;
+        if (exploreTicks > EXPLORE_TIMEOUT_TICKS) {
+            exitExploration();
+            return;
+        }
+
+        // Sustained progress toward the remembered goal ends exploration.
+        double goalDx = exploreGoalX - getX();
+        double goalDz = exploreGoalZ - getZ();
+        double goalDistSq = goalDx * goalDx + goalDz * goalDz;
+        if (goalDistSq < exploreBestGoalDistSq - 0.25) {
+            exploreBestGoalDistSq = goalDistSq;
+            exploreProgressTicks++;
+        } else if (exploreProgressTicks > 0) {
+            exploreProgressTicks--;
+        }
+        if (goalDistSq < EXPLORE_GOAL_REACHED_SQ
+            || exploreProgressTicks >= EXPLORE_PROGRESS_TICKS_TO_EXIT) {
+            exitExploration(true);
+            return;
+        }
+
+        long cellKey = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
+            getBlockX(), getBlockY(), getBlockZ());
+        boolean newCell = cellKey != exploreLastCellKey;
+        if (newCell) {
+            nav.markVisited(cellKey, gameTime);
+            exploreLastCellKey = cellKey;
+
+            // Someone already mapped this cell's way forward: follow the flow.
+            byte flow = nav.getFlow(cellKey, gameTime);
+            if (flow != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+                exploreDir = flow;
+            }
+        }
+
+        if (exploreCommitTicks > 0) {
+            exploreCommitTicks--;
+        }
+
+        // Re-decide on a wall hit or when we have no heading yet. The commit
+        // grace window keeps residual collision from the previous heading
+        // from instantly re-triggering a decision.
+        boolean wallHit = horizontalCollision && exploreCommitTicks <= 0;
+        if (exploreDir == io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE || wallHit) {
+            byte excluded = wallHit ? exploreDir
+                : io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
+            exploreDir = chooseExploreDirection(nav, gameTime, excluded, goalDx, goalDz);
+
+            if (exploreDir == io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+                // Dead end: seal this cell for the whole team and backtrack,
+                // leaving a flow vector pointing the way out for followers.
+                nav.markBlocked(cellKey, gameTime);
+                byte back = chooseBacktrackDirection(nav, gameTime);
+                if (back == io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+                    exitExploration(); // fully boxed in; give up gracefully
+                    return;
+                }
+                nav.setFlow(cellKey, back, gameTime);
+                exploreDir = back;
+            }
+            exploreCommitTicks = 4;
+        }
+
+        // Straight-line run in the chosen cardinal direction.
+        int dirX = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDx(exploreDir);
+        int dirZ = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDz(exploreDir);
+        setAiState(SoldierAiState.CHASING);
+        chasePosition(new Vec3(getX() + dirX * 3.0, getY(), getZ() + dirZ * 3.0));
+    }
+
+    /**
+     * Picks the most promising unvisited, unblocked, walkable cardinal —
+     * preferring the one pointing at the goal. FLOW_NONE means dead end.
+     */
+    private byte chooseExploreDirection(io.github.joshiat.claylegion.entity.nav.TeamNavMemory nav,
+                                        long gameTime, byte excludedDir, double goalDx, double goalDz) {
+        double goalLen = Math.sqrt(goalDx * goalDx + goalDz * goalDz);
+        double goalNx = goalLen > 1.0E-6 ? goalDx / goalLen : 0.0;
+        double goalNz = goalLen > 1.0E-6 ? goalDz / goalLen : 0.0;
+
+        byte best = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
+        double bestScore = -Double.MAX_VALUE;
+        for (byte dir = 0; dir < 4; dir++) {
+            if (dir == excludedDir) {
+                continue;
+            }
+            int dx = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDx(dir);
+            int dz = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDz(dir);
+            if (!isWalkableCell(getBlockX() + dx, getBlockY(), getBlockZ() + dz)) {
+                continue;
+            }
+            long neighborKey = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
+                getBlockX() + dx, getBlockY(), getBlockZ() + dz);
+            if (nav.isBlocked(neighborKey, gameTime) || nav.isVisited(neighborKey, gameTime)) {
+                continue;
+            }
+
+            double score = dx * goalNx + dz * goalNz + getRandom().nextDouble() * 0.2;
+            if (score > bestScore) {
+                bestScore = score;
+                best = dir;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Backtrack heading: prefer a visited-but-open neighbor; failing that,
+     * walk back through an already-blocked cell — blocked branches are still
+     * physically walkable, and retreating through them is how you exit one.
+     */
+    private byte chooseBacktrackDirection(io.github.joshiat.claylegion.entity.nav.TeamNavMemory nav,
+                                          long gameTime) {
+        byte blockedFallback = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
+        for (byte dir = 0; dir < 4; dir++) {
+            int dx = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDx(dir);
+            int dz = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDz(dir);
+            if (!isWalkableCell(getBlockX() + dx, getBlockY(), getBlockZ() + dz)) {
+                continue;
+            }
+            long neighborKey = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
+                getBlockX() + dx, getBlockY(), getBlockZ() + dz);
+            if (nav.isVisited(neighborKey, gameTime)) {
+                return dir;
+            }
+            if (nav.isBlocked(neighborKey, gameTime)) {
+                blockedFallback = dir;
+            }
+        }
+        return blockedFallback;
+    }
+
+    /** Cheap walkability: the cell's own block has no collision shape. */
+    private boolean isWalkableCell(int x, int y, int z) {
+        net.minecraft.core.BlockPos pos = new net.minecraft.core.BlockPos(x, y, z);
+        return level().getBlockState(pos).getCollisionShape(level(), pos).isEmpty();
     }
 
     private void applyIdleBraking() {

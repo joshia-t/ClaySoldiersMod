@@ -453,6 +453,133 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
+    // ── Swarm AI: exploration + contact intel ──────────────────────────────
+
+    private static final String ARENA_LARGE = "clay-legion:arena_large";
+
+    /**
+     * A soldier sealed in a two-cell pocket with a rumor beyond the wall:
+     * exploration must enter, exhaust the pocket, and stamp both cells as
+     * BLOCKED with a flow vector — visible to its team only.
+     */
+    @GameTest(structure = ARENA_LARGE, maxTicks = 400, padding = 12)
+    public void explorationSealsDeadEndPocket(GameTestHelper helper) {
+        // Sealed 1x2 pocket around cells (4,4)-(4,5).
+        placeWall(helper, 4, 3);
+        placeWall(helper, 3, 4);
+        placeWall(helper, 5, 4);
+        placeWall(helper, 3, 5);
+        placeWall(helper, 5, 5);
+        placeWall(helper, 4, 6);
+
+        ClaySoldierEntity soldier = spawnSoldierAt(helper, 40, 4.5, 4.5);
+        Vec3 goal = helper.absoluteVec(new Vec3(8.5, 1.0, 4.5));
+
+        var nav = io.github.joshiat.claylegion.entity.nav.TeamNavIndex
+            .get(helper.getLevel()).forTeam(40);
+        var enemyNav = io.github.joshiat.claylegion.entity.nav.TeamNavIndex
+            .get(helper.getLevel()).forTeam(41);
+        BlockPos deepCell = helper.absolutePos(new BlockPos(4, 1, 5));
+        long deepKey = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
+            deepCell.getX(), deepCell.getY(), deepCell.getZ());
+
+        helper.succeedWhen(() -> {
+            long now = helper.getLevel().getGameTime();
+            // Ongoing-battle rumor keeps the soldier motivated.
+            soldier.noteEnemySighting(null, goal.x, goal.y, goal.z, 1.0f, now, false);
+
+            if (!nav.isBlocked(deepKey, now)) {
+                helper.fail("Pocket cell should be marked blocked by the swarm map");
+                return;
+            }
+            if (nav.getFlow(deepKey, now)
+                == io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+                helper.fail("Blocked pocket cells should carry an outbound flow vector");
+                return;
+            }
+            if (enemyNav.isBlocked(deepKey, now) || enemyNav.isVisited(deepKey, now)) {
+                helper.fail("Nav intel must stay team-private");
+            }
+        });
+    }
+
+    /**
+     * Corridor maze with the exit on the opposite side from the rumor:
+     * pure goal-chasing pins the soldier in a corner forever; exploration
+     * mode must map the corridor and get it out the far side.
+     */
+    @GameTest(structure = ARENA_LARGE, maxTicks = 900, padding = 12)
+    public void explorationEscapesCorridorMaze(GameTestHelper helper) {
+        for (int z = 0; z <= 6; z++) {
+            placeWall(helper, 2, z);
+            placeWall(helper, 4, z);
+        }
+
+        ClaySoldierEntity soldier = spawnSoldierAt(helper, 43, 3.5, 4.5);
+        Vec3 goal = helper.absoluteVec(new Vec3(7.5, 1.0, 0.5));
+
+        var nav = io.github.joshiat.claylegion.entity.nav.TeamNavIndex
+            .get(helper.getLevel()).forTeam(43);
+        BlockPos corridorCell = helper.absolutePos(new BlockPos(3, 1, 2));
+        long corridorKey = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
+            corridorCell.getX(), corridorCell.getY(), corridorCell.getZ());
+
+        helper.succeedWhen(() -> {
+            long now = helper.getLevel().getGameTime();
+            soldier.noteEnemySighting(null, goal.x, goal.y, goal.z, 1.0f, now, false);
+
+            if (!nav.isVisited(corridorKey, now) && !nav.isBlocked(corridorKey, now)) {
+                helper.fail("Exploration should have mapped the corridor");
+                return;
+            }
+            double soldierRelX = soldier.getX() - helper.absoluteVec(Vec3.ZERO).x;
+            if (soldierRelX < 4.5) {
+                helper.fail("Soldier has not escaped the corridor yet, relX=" + soldierRelX);
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA_LARGE, maxTicks = 200, padding = 12)
+    public void contactIntelSpreadsBetweenAllies(GameTestHelper helper) {
+        ClaySoldierEntity runner = spawnSoldierAt(helper, 42, 3.5, 4.5);
+        ClaySoldierEntity listener = spawnSoldierAt(helper, 42, 5.5, 4.5);
+        listener.applyRoot();
+
+        // The runner heard a rumor; the listener hasn't.
+        Vec3 rumor = helper.absoluteVec(new Vec3(8.5, 1.0, 8.5));
+        long gameTime = helper.getLevel().getGameTime();
+        runner.noteEnemySighting(null, rumor.x, rumor.y, rumor.z, 1.0f, gameTime, false);
+
+        helper.succeedWhen(() -> {
+            // Keep the runner's memory fresh so it has something to share.
+            long now = helper.getLevel().getGameTime();
+            runner.noteEnemySighting(null, rumor.x, rumor.y, rumor.z, 1.0f, now, false);
+
+            if (listener.getTargetMemoryConfidence() <= 0.0f) {
+                helper.fail("Contact with the runner should hand the rumor to the listener");
+            }
+        });
+    }
+
+    private static void placeWall(GameTestHelper helper, int x, int z) {
+        helper.setBlock(new BlockPos(x, 1, z), net.minecraft.world.level.block.Blocks.TERRACOTTA);
+        helper.setBlock(new BlockPos(x, 2, z), net.minecraft.world.level.block.Blocks.TERRACOTTA);
+    }
+
+    private static ClaySoldierEntity spawnSoldierAt(GameTestHelper helper, int teamId,
+                                                    double relX, double relZ) {
+        ServerLevel level = helper.getLevel();
+        ClaySoldierEntity soldier = EntityRegistry.CLAY_SOLDIER.create(level, EntitySpawnReason.COMMAND);
+        if (soldier == null) {
+            throw new IllegalStateException("Failed to create Clay Soldier entity");
+        }
+        soldier.setTeamId(teamId);
+        Vec3 pos = helper.absoluteVec(new Vec3(relX, 1.0, relZ));
+        soldier.setPos(pos.x, pos.y, pos.z);
+        level.addFreshEntity(soldier);
+        return soldier;
+    }
+
     // ── Loot seeking (issue #40) ───────────────────────────────────────────
 
     // Loot/mount scans reach 8 blocks and gossip travels level-wide, so these
