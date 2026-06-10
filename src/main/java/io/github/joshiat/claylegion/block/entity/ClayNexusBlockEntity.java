@@ -28,6 +28,8 @@ public class ClayNexusBlockEntity extends BlockEntity {
     private UUID nexusId = UUID.randomUUID();
     private int templateTeamId;
     private boolean templateBrick;
+    // The nexus stays dormant until a soldier doll is inserted (issue #37).
+    private boolean hasTemplate;
     private int maxSpawnLimit = ClayLegionConfig.getNexusMaxSpawnLimit();
     private int spawnDelay = DEFAULT_SPAWN_DELAY;
     private int spawnCount = ClayLegionConfig.getNexusMaxSpawnCount();
@@ -74,15 +76,49 @@ public class ClayNexusBlockEntity extends BlockEntity {
 
         templateTeamId = dollItem.getTeamId(stack);
         templateBrick = dollItem == io.github.joshiat.claylegion.registry.ItemRegistry.BRICK_SOLDIER_DOLL;
+        hasTemplate = true;
         setChanged();
+        syncToClients();
+    }
+
+    /** True once a doll has been inserted; spawning is disabled until then. */
+    public boolean hasTemplate() {
+        return hasTemplate;
+    }
+
+    public int getTemplateTeamId() {
+        return templateTeamId;
+    }
+
+    public boolean isTemplateBrick() {
+        return templateBrick;
+    }
+
+    private void syncToClients() {
+        if (level != null && !level.isClientSide()) {
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        }
     }
 
     public String describeSettings() {
-        return "team=" + templateTeamId
-            + (templateBrick ? " brick" : "")
+        return (hasTemplate ? "team=" + templateTeamId + (templateBrick ? " brick" : "") : "dormant (insert a doll)")
             + ", limit=" + maxSpawnLimit
             + ", delay=" + spawnDelay
-            + ", count=" + spawnCount;
+            + ", count=" + spawnCount
+            + ", cooldown=" + spawnCooldown
+            + ", pending=" + pendingSpawnCount;
+    }
+
+    /**
+     * Linked summons die with their nexus, regardless of how the block was
+     * removed — mining, explosions, pistons, or /setblock (issue #33).
+     */
+    @Override
+    public void preRemoveSideEffects(BlockPos pos, BlockState state) {
+        if (level instanceof ServerLevel serverLevel) {
+            removeLinkedSummons(serverLevel);
+        }
+        super.preRemoveSideEffects(pos, state);
     }
 
     @Override
@@ -99,6 +135,7 @@ public class ClayNexusBlockEntity extends BlockEntity {
 
         templateTeamId = input.getInt("TemplateTeamId").orElse(0);
         templateBrick = input.getBooleanOr("TemplateBrick", false);
+        hasTemplate = input.getBooleanOr("HasTemplate", false);
         maxSpawnLimit = input.getInt("MaxSpawnLimit").orElse(ClayLegionConfig.getNexusMaxSpawnLimit());
         spawnDelay = input.getInt("SpawnDelay").orElse(DEFAULT_SPAWN_DELAY);
         spawnCount = input.getInt("SpawnCount").orElse(ClayLegionConfig.getNexusMaxSpawnCount());
@@ -107,12 +144,28 @@ public class ClayNexusBlockEntity extends BlockEntity {
         clampSettings();
     }
 
+    /** Template data reaches clients so the renderer can display the spawn (issue #31). */
+    @Override
+    public net.minecraft.nbt.CompoundTag getUpdateTag(net.minecraft.core.HolderLookup.Provider registries) {
+        net.minecraft.nbt.CompoundTag tag = super.getUpdateTag(registries);
+        tag.putBoolean("HasTemplate", hasTemplate);
+        tag.putInt("TemplateTeamId", templateTeamId);
+        tag.putBoolean("TemplateBrick", templateBrick);
+        return tag;
+    }
+
+    @Override
+    public net.minecraft.network.protocol.Packet<net.minecraft.network.protocol.game.ClientGamePacketListener> getUpdatePacket() {
+        return net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket.create(this);
+    }
+
     @Override
     protected void saveAdditional(ValueOutput output) {
         super.saveAdditional(output);
         output.putString("NexusId", nexusId.toString());
         output.putInt("TemplateTeamId", templateTeamId);
         output.putBoolean("TemplateBrick", templateBrick);
+        output.putBoolean("HasTemplate", hasTemplate);
         output.putInt("MaxSpawnLimit", maxSpawnLimit);
         output.putInt("SpawnDelay", spawnDelay);
         output.putInt("SpawnCount", spawnCount);
@@ -129,6 +182,11 @@ public class ClayNexusBlockEntity extends BlockEntity {
 
         if (spawnCooldown > 0) {
             spawnCooldown--;
+        }
+
+        // Dormant until a soldier doll is inserted (issue #37).
+        if (!hasTemplate) {
+            return;
         }
 
         if (pendingSpawnCount <= 0 && spawnCount > 0 && maxSpawnLimit > 0 && spawnCooldown <= 0) {

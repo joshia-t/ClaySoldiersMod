@@ -333,6 +333,57 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
+    // ── Clay Nexus (issues #37, #33) ───────────────────────────────────────
+
+    @GameTest(structure = ARENA, maxTicks = 130)
+    public void nexusStaysDormantUntilDollInserted(GameTestHelper helper) {
+        // Floor slot: the harness seals the structure with barriers, so the
+        // spawn space above the nexus must stay inside the arena airspace.
+        BlockPos nexusPos = new BlockPos(1, 0, 1);
+        helper.setBlock(nexusPos, io.github.joshiat.claylegion.registry.BlockRegistry.CLAY_NEXUS);
+
+        helper.runAfterDelay(100, () -> {
+            List<ClaySoldierEntity> spawned = helper.getLevel().getEntitiesOfClass(
+                ClaySoldierEntity.class, helper.getBounds().inflate(3.0), e -> true);
+            if (!spawned.isEmpty()) {
+                helper.fail("Dormant nexus must not spawn soldiers, found " + spawned.size());
+                return;
+            }
+            helper.succeed();
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 200)
+    public void nexusSpawnsAfterDollInsertedAndKillsSummonsOnRemoval(GameTestHelper helper) {
+        BlockPos nexusPos = new BlockPos(1, 0, 1);
+        helper.setBlock(nexusPos, io.github.joshiat.claylegion.registry.BlockRegistry.CLAY_NEXUS);
+
+        if (!(helper.getLevel().getBlockEntity(helper.absolutePos(nexusPos))
+            instanceof io.github.joshiat.claylegion.block.entity.ClayNexusBlockEntity nexus)) {
+            helper.fail("Clay nexus block entity missing");
+            return;
+        }
+        nexus.setTemplateFromDoll(new ItemStack(ItemRegistry.SOLDIER_DOLL));
+
+        helper.succeedWhen(() -> {
+            List<ClaySoldierEntity> summons = helper.getLevel().getEntitiesOfClass(
+                ClaySoldierEntity.class, helper.getBounds().inflate(3.0), ClaySoldierEntity::isNexusSummon);
+            if (summons.isEmpty()) {
+                helper.fail("Nexus with template should spawn soldiers");
+                return;
+            }
+
+            // Removing the block must take its summons with it (issue #33).
+            helper.setBlock(nexusPos, net.minecraft.world.level.block.Blocks.AIR);
+            List<ClaySoldierEntity> survivors = helper.getLevel().getEntitiesOfClass(
+                ClaySoldierEntity.class, helper.getBounds().inflate(3.0),
+                s -> s.isNexusSummon() && !s.isRemoved());
+            if (!survivors.isEmpty()) {
+                helper.fail("Destroying the nexus must remove its summons, " + survivors.size() + " survived");
+            }
+        });
+    }
+
     // ── Combat status sync (issue #24) ─────────────────────────────────────
 
     @GameTest(structure = ARENA, maxTicks = 100)
