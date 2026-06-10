@@ -29,6 +29,11 @@ public class SoldierCombatDamageHelper {
      * @param attackerEntity The entity dealing damage (optional, used for knockback direction).
      */
     public static void applySoldierDamage(ClaySoldierEntity soldier, float amount, byte attackingTeam, Entity attackerEntity) {
+        applySoldierDamage(soldier, amount, attackingTeam, attackerEntity, ClaySoldierEntity.SoldierDamageKind.GENERIC);
+    }
+
+    public static void applySoldierDamage(ClaySoldierEntity soldier, float amount, byte attackingTeam,
+                                          Entity attackerEntity, ClaySoldierEntity.SoldierDamageKind kind) {
         if (soldier.level().isClientSide() || soldier.isSoldierDead() || amount <= 0.0f) {
             return;
         }
@@ -38,7 +43,7 @@ public class SoldierCombatDamageHelper {
             return;
         }
 
-        applyResolvedDamage(soldier, amount, attackerEntity);
+        applyResolvedDamage(soldier, amount, attackerEntity, kind);
     }
 
     /**
@@ -57,12 +62,19 @@ public class SoldierCombatDamageHelper {
 
     public static void applyCombatDamage(ClaySoldierEntity target, float rawDamage, ClaySoldierEntity attacker,
                                          float riderHitChanceOverride, float rawDamageMultiplier) {
+        applyCombatDamage(target, rawDamage, attacker, riderHitChanceOverride, rawDamageMultiplier,
+            ClaySoldierEntity.SoldierDamageKind.MELEE);
+    }
+
+    public static void applyCombatDamage(ClaySoldierEntity target, float rawDamage, ClaySoldierEntity attacker,
+                                         float riderHitChanceOverride, float rawDamageMultiplier,
+                                         ClaySoldierEntity.SoldierDamageKind kind) {
         if (target.level().isClientSide() || target.isSoldierDead() || rawDamage <= 0.0f) {
             return;
         }
 
-        // Friendly-fire suppression
-        if (attacker != null && attacker.getTeamId() == target.getTeamId()) {
+        // Friendly-fire suppression — bypassed for nether wart berserkers.
+        if (attacker != null && attacker.getTeamId() == target.getTeamId() && !attacker.ignoresTeamLines()) {
             return;
         }
 
@@ -72,7 +84,7 @@ public class SoldierCombatDamageHelper {
 
         if (!targetMounted) {
             // Target is infantry: take full damage
-            applyResolvedDamage(target, resolvedDamage, attacker);
+            applyResolvedDamage(target, resolvedDamage, attacker, kind);
             return;
         }
 
@@ -86,7 +98,7 @@ public class SoldierCombatDamageHelper {
         Entity mount = target.getVehicle();
         if (roll < riderHitChance) {
             // Damage bypasses mount and hits the rider directly.
-            applyResolvedDamage(target, resolvedDamage, attacker);
+            applyResolvedDamage(target, resolvedDamage, attacker, kind);
         } else {
             // Delegate damage to the mount.
             if (mount instanceof BaseMountEntity legacyMount) {
@@ -98,15 +110,30 @@ public class SoldierCombatDamageHelper {
     /**
      * Internal: process direct damage and knockback.
      */
-    private static void applyResolvedDamage(ClaySoldierEntity soldier, float amount, Entity attackerEntity) {
+    private static void applyResolvedDamage(ClaySoldierEntity soldier, float amount, Entity attackerEntity,
+                                            ClaySoldierEntity.SoldierDamageKind kind) {
+        amount = soldier.applyDefensiveUpgrades(amount, kind, attackerEntity);
+        if (amount <= 0.0f) {
+            return;
+        }
+
         float newHealth = soldier.getSoldierHealth() - amount;
         soldier.setSoldierHealth(newHealth);
         soldier.setHurtFlashTicks(8);  // HURT_FLASH_DURATION
-        soldier.aggroOnHit(resolveAttackingSoldier(attackerEntity));
+        ClaySoldierEntity attackingSoldier = resolveAttackingSoldier(attackerEntity);
+        soldier.aggroOnHit(attackingSoldier);
         applyDamageKnockback(soldier, attackerEntity);
 
         if (newHealth <= 0f && soldier.level() instanceof ServerLevel serverLevel) {
+            // Magma cream: a melee killer is handed a ticking time bomb.
+            if (kind == ClaySoldierEntity.SoldierDamageKind.MELEE
+                && attackingSoldier != null
+                && soldier.hasUpgrade(io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags.MAGMA_CREAM)) {
+                attackingSoldier.applyTimeBomb();
+            }
             soldier.onSoldierKilled(serverLevel);
+        } else {
+            soldier.runPostDamageTriggers();
         }
     }
 
@@ -129,6 +156,15 @@ public class SoldierCombatDamageHelper {
             return;
         }
 
+        // Iron ingot doubles knockback dealt; iron ingot/brick on the target resist it.
+        double knockbackScale = soldier.getKnockbackResistFactor();
+        if (attackerEntity instanceof ClaySoldierEntity attackingSoldier) {
+            knockbackScale *= attackingSoldier.getKnockbackDealtFactor();
+        }
+        if (knockbackScale <= 0.0) {
+            return;
+        }
+
         double dx = soldier.getX() - attackerEntity.getX();
         double dz = soldier.getZ() - attackerEntity.getZ();
         double lenSq = dx * dx + dz * dz;
@@ -147,11 +183,12 @@ public class SoldierCombatDamageHelper {
         dz *= invLen;
 
         Vec3 velocity = soldier.getDeltaMovement();
-        double nextY = Math.min(DAMAGE_KNOCKBACK_VERTICAL_CAP, velocity.y + DAMAGE_KNOCKBACK_VERTICAL);
+        double nextY = Math.min(DAMAGE_KNOCKBACK_VERTICAL_CAP,
+            velocity.y + DAMAGE_KNOCKBACK_VERTICAL * knockbackScale);
         soldier.setDeltaMovement(
-            velocity.x + dx * DAMAGE_KNOCKBACK_HORIZONTAL,
+            velocity.x + dx * DAMAGE_KNOCKBACK_HORIZONTAL * knockbackScale,
             nextY,
-            velocity.z + dz * DAMAGE_KNOCKBACK_HORIZONTAL
+            velocity.z + dz * DAMAGE_KNOCKBACK_HORIZONTAL * knockbackScale
         );
     }
 }

@@ -225,10 +225,9 @@ public class ClayLegion implements ModInitializer {
 
 		String message = "ClaySoldier inspect | activeUpgrades=0x"
 			+ Long.toHexString(soldier.getActiveUpgrades()).toUpperCase(Locale.ROOT)
-			+ ", stick=" + soldier.hasUpgrade(UpgradeFlags.STICK)
-			+ ", stickUses=" + soldier.getStickUsesRemaining()
+			+ " [" + soldier.describeUpgrades() + "]"
 			+ ", memory=" + String.format(Locale.ROOT, "%.2f", soldier.getTargetMemoryConfidence())
-			+ ", health=" + String.format(Locale.ROOT, "%.2f", soldier.getSoldierHealth())
+			+ ", health=" + String.format(Locale.ROOT, "%.2f/%.2f", soldier.getSoldierHealth(), soldier.getSoldierMaxHealth())
 			+ ", combatState=" + soldier.getAiState().name()
 			+ ", " + RuntimeTelemetry.snapshot();
 

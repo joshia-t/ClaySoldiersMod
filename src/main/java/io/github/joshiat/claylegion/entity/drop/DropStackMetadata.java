@@ -16,6 +16,7 @@ public final class DropStackMetadata {
     public static final String UPGRADE_FLAG_TAG = "cl_drop_upgrade_flag";
     public static final String UPGRADE_USES_TAG = "cl_drop_upgrade_uses";
     public static final String SOLDIER_USES_TAG = "cl_drop_soldier_uses";
+    public static final String NO_ZOMBIFY_TAG = "cl_drop_no_zombify";
 
     private DropStackMetadata() {
     }
@@ -57,6 +58,18 @@ public final class DropStackMetadata {
         return Math.max(0, tag.getInt(SOLDIER_USES_TAG).orElse(fallbackUses));
     }
 
+    /** Marks a doll as un-revivable by ender pearl zombification (wheat seeds immunity). */
+    public static void setZombificationBlocked(ItemStack stack) {
+        CompoundTag tag = getOrCreateTag(stack);
+        tag.putBoolean(NO_ZOMBIFY_TAG, true);
+        setTag(stack, tag);
+    }
+
+    public static boolean isZombificationBlocked(ItemStack stack) {
+        CompoundTag tag = getTagOrNull(stack);
+        return tag != null && tag.getBoolean(NO_ZOMBIFY_TAG).orElse(false);
+    }
+
     public static void clearTransientData(ItemStack stack) {
         CompoundTag tag = getTagOrNull(stack);
         if (tag == null) {
@@ -66,6 +79,7 @@ public final class DropStackMetadata {
         tag.remove(UPGRADE_FLAG_TAG);
         tag.remove(UPGRADE_USES_TAG);
         tag.remove(SOLDIER_USES_TAG);
+        tag.remove(NO_ZOMBIFY_TAG);
 
         if (tag.isEmpty()) {
             stack.remove(DataComponents.CUSTOM_DATA);

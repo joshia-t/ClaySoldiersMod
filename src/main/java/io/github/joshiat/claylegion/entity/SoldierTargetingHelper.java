@@ -62,11 +62,12 @@ public class SoldierTargetingHelper {
         double myX = soldier.getX();
         double myY = soldier.getY();
         double myZ = soldier.getZ();
-        double bestDistSq = TARGET_RANGE_SQ;
+        double bestDistSq = soldier.getTargetScanRangeSq();
         ClaySoldierEntity best = null;
 
         for (Map.Entry<Integer, List<ClaySoldierEntity>> entry : allTeams.entrySet()) {
-            if (entry.getKey() == myTeam) continue;
+            // Berserkers scan their own team too.
+            if (entry.getKey() == myTeam && !soldier.ignoresTeamLines()) continue;
             List<ClaySoldierEntity> enemies = entry.getValue();
             for (int i = 0, size = enemies.size(); i < size; i++) {
                 ClaySoldierEntity candidate = enemies.get(i);
@@ -209,8 +210,9 @@ public class SoldierTargetingHelper {
     private static boolean isValidTarget(ClaySoldierEntity candidate, ClaySoldierEntity searcher) {
         if (candidate == null || candidate == searcher) return false;
         if (!candidate.isAlive() || candidate.isRemoved() || candidate.isSoldierDead()) return false;
-        if (candidate.getTeamId() == searcher.getTeamId()) return false;
-        return searcher.distanceToSqr(candidate) <= TARGET_RANGE_SQ;
+        if (candidate.getTeamId() == searcher.getTeamId() && !searcher.ignoresTeamLines()) return false;
+        if (candidate.isUntargetable() || !searcher.canDetect(candidate)) return false;
+        return searcher.distanceToSqr(candidate) <= searcher.getTargetScanRangeSq();
     }
 
     /**
