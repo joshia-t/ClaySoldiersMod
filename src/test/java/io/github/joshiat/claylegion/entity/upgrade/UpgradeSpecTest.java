@@ -59,4 +59,21 @@ class UpgradeSpecTest {
         UpgradeSpec spec = new UpgradeSpec(UpgradeFlags.CONCRETE_POWDER, UpgradeSlot.MISC, 0, 0L, 0L, 0L);
         assertEquals(59, spec.bitIndex());
     }
+
+    @Test
+    void combinedRequirementAndBanBothApply() {
+        // Hypothetical upgrade needing STICK while banned by BONE.
+        UpgradeSpec spec = new UpgradeSpec(UpgradeFlags.FLINT, UpgradeSlot.ENHANCEMENT, 0,
+            UpgradeFlags.STICK, 0L, UpgradeFlags.BONE);
+
+        assertFalse(spec.canEquipOnto(0L), "missing requirement");
+        assertTrue(spec.canEquipOnto(UpgradeFlags.STICK));
+        assertFalse(spec.canEquipOnto(UpgradeFlags.STICK | UpgradeFlags.BONE), "ban outweighs met requirement");
+    }
+
+    @Test
+    void finiteUsesFlagging() {
+        assertTrue(new UpgradeSpec(UpgradeFlags.STICK, UpgradeSlot.MAIN_HAND, 20, 0L, 0L, 0L).hasFiniteUses());
+        assertFalse(new UpgradeSpec(UpgradeFlags.GLOWSTONE, UpgradeSlot.MISC, 0, 0L, 0L, 0L).hasFiniteUses());
+    }
 }
