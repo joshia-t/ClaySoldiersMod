@@ -33,6 +33,11 @@ public class FireChargeProjectileEntity extends ClayProjectileEntity {
     }
 
     @Override
+    protected net.minecraft.world.item.Item getRenderItem() {
+        return net.minecraft.world.item.Items.FIRE_CHARGE;
+    }
+
+    @Override
     protected void onHitSoldier(ClaySoldierEntity target) {
         super.onHitSoldier(target);
         if (shooter instanceof ClaySoldierEntity shooterSoldier

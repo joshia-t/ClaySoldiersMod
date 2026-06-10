@@ -26,7 +26,8 @@ import net.minecraft.world.level.storage.ValueOutput;
  *  - Payload resolution: On EntityHitResult, verify target is a ClaySoldierEntity of opposing team.
  *  - Variants (Gravel, Snow, Fire Charge, Emerald) handled via enum/DataComponent, not separate classes.
  */
-public abstract class ClayProjectileEntity extends Entity {
+public abstract class ClayProjectileEntity extends Entity
+    implements net.minecraft.world.entity.projectile.ItemSupplier {
 
     private static final EntityDataAccessor<Byte> PROJECTILE_TYPE =
             SynchedEntityData.defineId(ClayProjectileEntity.class, EntityDataSerializers.BYTE);
@@ -36,9 +37,34 @@ public abstract class ClayProjectileEntity extends Entity {
     private static final double GRAVITY = 0.05;  // Slightly less than entity gravity for flatter arc
 
     protected Entity shooter;
+    // Piercing payload (issue #15): how many further targets this projectile
+    // may pass through after a hit, and which entities were already struck.
+    private int piercesRemaining;
+    private final java.util.Set<Integer> hitEntityIds = new java.util.HashSet<>();
 
     public ClayProjectileEntity(EntityType<? extends ClayProjectileEntity> type, Level level) {
         super(type, level);
+        this.piercesRemaining = getMaxPierces();
+    }
+
+    /** Number of extra targets the projectile passes through (0 = stops on first hit). */
+    protected int getMaxPierces() {
+        return 0;
+    }
+
+    /** Item rendered in flight by the vanilla ThrownItemRenderer (issue #16). */
+    protected net.minecraft.world.item.Item getRenderItem() {
+        return net.minecraft.world.item.Items.SNOWBALL;
+    }
+
+    private net.minecraft.world.item.ItemStack cachedRenderStack;
+
+    @Override
+    public net.minecraft.world.item.ItemStack getItem() {
+        if (cachedRenderStack == null) {
+            cachedRenderStack = new net.minecraft.world.item.ItemStack(getRenderItem());
+        }
+        return cachedRenderStack;
     }
 
     @Override
@@ -95,6 +121,12 @@ public abstract class ClayProjectileEntity extends Entity {
         // Move the projectile
         move(MoverType.SELF, getDeltaMovement());
 
+        // Despawn on world contact instead of sliding along the ground forever.
+        if (onGround() || horizontalCollision) {
+            discard();
+            return;
+        }
+
         // Every tick, perform collision detection with nearby entities
         boolean projProfiling = TargetingProfiler.isEnabled();
         long projStart = projProfiling ? System.nanoTime() : 0L;
@@ -114,25 +146,41 @@ public abstract class ClayProjectileEntity extends Entity {
         var entities = serverLevel.getEntitiesOfClass(Entity.class, searchBox, e -> e != this && e != shooter);
 
         for (Entity entity : entities) {
-            if (entity instanceof ClaySoldierEntity soldier) {
-                // Verify the target is of an opposing team
-                if (shooter instanceof ClaySoldierEntity shooterSoldier) {
-                    if (soldier.getTeamId() != shooterSoldier.getTeamId()) {
-                        // Hit detected: apply payload
-                        RuntimeTelemetry.recordProjectileImpact();
-                        onHitSoldier(soldier);
-                        discard();
-                        return;
-                    }
-                } else {
-                    // Non-soldier shooter; damage any soldier
-                    RuntimeTelemetry.recordProjectileImpact();
-                    onHitSoldier(soldier);
-                    discard();
-                    return;
-                }
+            if (!(entity instanceof ClaySoldierEntity soldier) || hitEntityIds.contains(soldier.getId())) {
+                continue;
+            }
+            // Verify the target is of an opposing team (non-soldier shooters hit anyone).
+            if (shooter instanceof ClaySoldierEntity shooterSoldier
+                && soldier.getTeamId() == shooterSoldier.getTeamId()) {
+                continue;
+            }
+
+            RuntimeTelemetry.recordProjectileImpact();
+            hitEntityIds.add(soldier.getId());
+            onHitSoldier(soldier);
+
+            // Piercing projectiles continue through the target (issue #15).
+            if (piercesRemaining-- <= 0) {
+                discard();
+                return;
             }
         }
+    }
+
+    /** Push the target along the projectile's flight direction. */
+    protected void applyImpactKnockback(ClaySoldierEntity target, double strength) {
+        Vec3 velocity = getDeltaMovement();
+        double lenSq = velocity.x * velocity.x + velocity.z * velocity.z;
+        if (lenSq < 1.0E-6) {
+            return;
+        }
+        double invLen = 1.0 / Math.sqrt(lenSq);
+        double scale = strength * target.getKnockbackResistFactor();
+        target.setDeltaMovement(target.getDeltaMovement().add(
+            velocity.x * invLen * scale,
+            0.1 * (scale > 0 ? 1.0 : 0.0),
+            velocity.z * invLen * scale
+        ));
     }
 
     protected void onHitSoldier(ClaySoldierEntity target) {

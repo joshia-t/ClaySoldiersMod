@@ -298,6 +298,87 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
+    // ── Projectile payloads (issue #15) ────────────────────────────────────
+
+    @GameTest(structure = ARENA, maxTicks = 100)
+    public void snowProjectileSlowsTarget(GameTestHelper helper) {
+        ClaySoldierEntity target = spawnSoldier(helper, 2);
+        fireProjectileAt(helper, EntityRegistry.SNOW_PROJECTILE.create(helper.getLevel(), EntitySpawnReason.COMMAND),
+            UpgradeFlags.SNOW, target);
+
+        helper.succeedWhen(() -> {
+            if (!target.isSlowed()) {
+                helper.fail("Snow projectile should slow the target");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 100)
+    public void fireChargeProjectileBurnsTarget(GameTestHelper helper) {
+        ClaySoldierEntity target = spawnSoldier(helper, 2);
+        fireProjectileAt(helper, EntityRegistry.FIRE_CHARGE_PROJECTILE.create(helper.getLevel(), EntitySpawnReason.COMMAND),
+            UpgradeFlags.FIRE_CHARGE, target);
+
+        helper.succeedWhen(() -> {
+            if (!target.isCombusting()) {
+                helper.fail("Fire charge projectile should ignite the target");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 100)
+    public void emeraldProjectilePiercesThroughTwoTargets(GameTestHelper helper) {
+        ClaySoldierEntity first = spawnSoldier(helper, 2);
+        ClaySoldierEntity second = spawnSoldier(helper, 2);
+        second.setPos(first.getX() + 0.9, first.getY(), first.getZ());
+
+        fireProjectileAt(helper, EntityRegistry.EMERALD_PROJECTILE.create(helper.getLevel(), EntitySpawnReason.COMMAND),
+            UpgradeFlags.EMERALD, first);
+
+        helper.succeedWhen(() -> {
+            boolean firstHit = first.getSoldierHealth() < first.getSoldierMaxHealth() || first.isRemoved();
+            boolean secondHit = second.getSoldierHealth() < second.getSoldierMaxHealth() || second.isRemoved();
+            if (!firstHit || !secondHit) {
+                helper.fail("Emerald projectile should pierce through and hit both targets");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 100)
+    public void emeraldProjectileBypassesArmor(GameTestHelper helper) {
+        ClaySoldierEntity target = spawnSoldier(helper, 2);
+        target.forceEquipUpgrade(UpgradeFlags.LEATHER);
+        target.forceEquipUpgrade(UpgradeFlags.BOWL);
+
+        fireProjectileAt(helper, EntityRegistry.EMERALD_PROJECTILE.create(helper.getLevel(), EntitySpawnReason.COMMAND),
+            UpgradeFlags.EMERALD, target);
+
+        // Piercing damage is 3.0 * 1.35 = 4.05; armored RANGED damage would be
+        // ~1.0. Health below 17 proves the reductions were bypassed.
+        helper.succeedWhen(() -> {
+            if (target.getSoldierHealth() > 17.0f) {
+                helper.fail("Emerald should bypass armor reductions, health=" + target.getSoldierHealth());
+            }
+        });
+    }
+
+    /** Spawns a pacifist shooter with the payload upgrade and a projectile flying at the target. */
+    private static void fireProjectileAt(GameTestHelper helper,
+                                         io.github.joshiat.claylegion.entity.projectile.ClayProjectileEntity projectile,
+                                         long payloadUpgrade, ClaySoldierEntity target) {
+        ClaySoldierEntity shooter = spawnSoldier(helper, 1);
+        // Wheat keeps the shooter's own AI out of the test.
+        shooter.forceEquipUpgrade(UpgradeFlags.WHEAT);
+        shooter.forceEquipUpgrade(payloadUpgrade);
+
+        Vec3 origin = target.position().add(-1.0, 0.4, 0.0);
+        Vec3 direction = target.position().add(0.0, 0.16, 0.0).subtract(origin).normalize();
+        projectile.setShooter(shooter);
+        projectile.setPos(origin);
+        projectile.setDeltaMovement(direction.scale(0.55));
+        helper.getLevel().addFreshEntity(projectile);
+    }
+
     // ── Possession ─────────────────────────────────────────────────────────
 
     @GameTest(structure = ARENA)

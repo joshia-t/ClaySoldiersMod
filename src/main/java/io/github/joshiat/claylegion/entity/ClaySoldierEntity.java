@@ -1670,6 +1670,8 @@ public class ClaySoldierEntity extends Entity {
     public enum SoldierDamageKind {
         MELEE,
         RANGED,
+        /** Armor-piercing: skips shield/armor damage reductions entirely. */
+        PIERCING,
         FIRE,
         EXPLOSION,
         GENERIC
@@ -1973,8 +1975,14 @@ public class ClaySoldierEntity extends Entity {
     }
 
     public void applyEmeraldPayload(ClaySoldierEntity attacker, float damage) {
+        // Piercing payload (issue #15): bypasses armor-style damage reductions.
         SoldierCombatDamageHelper.applyCombatDamage(this, damage, attacker, 1.0f,
-            EMERALD_RAW_DAMAGE_MULTIPLIER, SoldierDamageKind.RANGED);
+            EMERALD_RAW_DAMAGE_MULTIPLIER, SoldierDamageKind.PIERCING);
+    }
+
+    /** True while the snow-payload slow debuff is active. */
+    public boolean isSlowed() {
+        return slowTicks > 0;
     }
 
     private boolean tryAcquireMount() {
