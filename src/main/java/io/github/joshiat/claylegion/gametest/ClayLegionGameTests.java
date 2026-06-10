@@ -2,11 +2,14 @@ package io.github.joshiat.claylegion.gametest;
 
 import com.mojang.authlib.GameProfile;
 import io.github.joshiat.claylegion.entity.ClaySoldierEntity;
+import io.github.joshiat.claylegion.entity.drop.DropStackMetadata;
 import io.github.joshiat.claylegion.entity.possession.SoldierPossessionManager;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeRegistry;
 import io.github.joshiat.claylegion.entity.upgrade.UpgradeSpec;
+import io.github.joshiat.claylegion.item.SoldierDollItem;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
+import io.github.joshiat.claylegion.registry.ItemRegistry;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
@@ -19,6 +22,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -177,6 +181,121 @@ public final class ClayLegionGameTests {
             }
             helper.succeed();
         });
+    }
+
+    @GameTest(structure = ARENA)
+    public void pickBlockReturnsTeamDoll(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 5);
+
+        ItemStack picked = soldier.getPickResult();
+        if (picked == null || !(picked.getItem() instanceof SoldierDollItem doll)) {
+            helper.fail("Pick block should return a soldier doll");
+            return;
+        }
+        if (doll.getTeamId(picked) != 5) {
+            helper.fail("Picked doll must preserve team id, got " + doll.getTeamId(picked));
+        }
+
+        ClaySoldierEntity brick = spawnSoldier(helper, 0);
+        brick.setBrickSoldier(true);
+        ItemStack pickedBrick = brick.getPickResult();
+        if (pickedBrick == null || !pickedBrick.is(ItemRegistry.BRICK_SOLDIER_DOLL)) {
+            helper.fail("Brick soldier pick block should return the brick doll");
+        }
+
+        helper.succeed();
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 100)
+    public void dollResurrectionBudgetIsFiniteAndDecrements(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        Vec3 center = helper.absoluteVec(Vec3.atCenterOf(SPAWN));
+
+        // A spent doll (0 revivals left) must never be revived.
+        ClaySoldierEntity medic = spawnSoldier(helper, 3);
+        medic.forceEquipUpgrade(UpgradeFlags.CLAY_BALL);
+
+        ItemStack spentDoll = new ItemStack(ItemRegistry.SOLDIER_DOLL);
+        SoldierDollItem.setTeamIdOnStack(spentDoll, 3);
+        DropStackMetadata.setSoldierUses(spentDoll, 0);
+        ItemEntity spentDrop = new ItemEntity(level, center.x, center.y, center.z, spentDoll);
+        spentDrop.setDeltaMovement(Vec3.ZERO);
+        level.addFreshEntity(spentDrop);
+
+        // A doll with one revival left revives once, and the revived soldier
+        // carries a budget of zero into its next death.
+        ItemStack lastUseDoll = new ItemStack(ItemRegistry.SOLDIER_DOLL);
+        SoldierDollItem.setTeamIdOnStack(lastUseDoll, 3);
+        DropStackMetadata.setSoldierUses(lastUseDoll, 1);
+        ItemEntity lastUseDrop = new ItemEntity(level, center.x, center.y, center.z, lastUseDoll);
+        lastUseDrop.setDeltaMovement(Vec3.ZERO);
+        level.addFreshEntity(lastUseDrop);
+
+        helper.runAfterDelay(60, () -> {
+            List<ClaySoldierEntity> revived = level.getEntitiesOfClass(
+                ClaySoldierEntity.class,
+                medic.getBoundingBox().inflate(4.0),
+                s -> s != medic && s.getTeamId() == 3
+            );
+            if (revived.size() != 1) {
+                helper.fail("Expected exactly one revival from the 1-use doll, got " + revived.size());
+                return;
+            }
+            if (revived.get(0).getResurrectionUsesRemaining() != 0) {
+                helper.fail("Revived soldier should carry a depleted resurrection budget, got "
+                    + revived.get(0).getResurrectionUsesRemaining());
+                return;
+            }
+            if (!spentDrop.isAlive()) {
+                helper.fail("Spent doll must not be consumed");
+                return;
+            }
+            helper.succeed();
+        });
+    }
+
+    @GameTest(structure = ARENA)
+    public void deathDropsDollAndUpgradesWithDurability(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        ClaySoldierEntity soldier = spawnSoldier(helper, 4);
+        soldier.forceEquipUpgrade(UpgradeFlags.STICK);
+
+        soldier.applySoldierDamage(1000.0f, (byte) -1);
+
+        List<ItemEntity> drops = level.getEntitiesOfClass(
+            ItemEntity.class,
+            helper.getBounds().inflate(2.0),
+            ItemEntity::isAlive
+        );
+
+        ItemEntity dollDrop = null;
+        ItemEntity stickDrop = null;
+        for (ItemEntity drop : drops) {
+            if (drop.getItem().getItem() instanceof SoldierDollItem) {
+                dollDrop = drop;
+            } else if (drop.getItem().is(Items.STICK)) {
+                stickDrop = drop;
+            }
+        }
+
+        if (dollDrop == null) {
+            helper.fail("Dead soldier must drop its doll");
+            return;
+        }
+        if (stickDrop == null) {
+            helper.fail("Dead soldier must drop its stick upgrade (issue #2)");
+            return;
+        }
+        if (DropStackMetadata.getUpgradeFlagOrZero(stickDrop.getItem()) != UpgradeFlags.STICK) {
+            helper.fail("Dropped stick should carry its upgrade flag metadata");
+            return;
+        }
+        if (DropStackMetadata.getUpgradeUsesOrDefault(stickDrop.getItem(), 0) != 20) {
+            helper.fail("Dropped stick should keep its remaining durability, got "
+                + DropStackMetadata.getUpgradeUsesOrDefault(stickDrop.getItem(), 0));
+            return;
+        }
+        helper.succeed();
     }
 
     // ── Possession ─────────────────────────────────────────────────────────
