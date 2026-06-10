@@ -2389,7 +2389,10 @@ public class ClaySoldierEntity extends Entity {
         if (kind == SoldierDamageKind.FIRE && !isSoldierDead()) {
             applyBurn(COMBUSTION_DURATION_TICKS);
         }
-        return !isSoldierDead();
+        // The hit landed — report it as such even when lethal, otherwise the
+        // killing blow registers as a miss and the held click falls through
+        // to the block behind the soldier (issue #1).
+        return true;
     }
 
     public enum SoldierAiState {
