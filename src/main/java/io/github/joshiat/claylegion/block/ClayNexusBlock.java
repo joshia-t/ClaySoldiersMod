@@ -106,15 +106,8 @@ public class ClayNexusBlock extends BaseEntityBlock implements EntityBlock {
             : createTickerHelper(type, BlockEntityRegistry.CLAY_NEXUS, ClayNexusBlockEntity::serverTick);
     }
 
-    @Override
-    public BlockState playerWillDestroy(Level level, BlockPos pos, BlockState state, Player player) {
-        if (!level.isClientSide()
-            && level instanceof ServerLevel serverLevel
-            && level.getBlockEntity(pos) instanceof ClayNexusBlockEntity nexus) {
-            nexus.removeLinkedSummons(serverLevel);
-        }
-        return super.playerWillDestroy(level, pos, state, player);
-    }
+    // Summon cleanup on destruction lives in ClayNexusBlockEntity.preRemoveSideEffects,
+    // which covers every removal path (mining, explosions, pistons, /setblock).
 
     @Override
     public int getSignal(BlockState blockState, BlockGetter blockGetter, BlockPos blockPos, net.minecraft.core.Direction direction) {
