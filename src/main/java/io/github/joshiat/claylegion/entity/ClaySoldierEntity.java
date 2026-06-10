@@ -72,6 +72,17 @@ public class ClaySoldierEntity extends Entity {
             SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.BYTE);
     private static final EntityDataAccessor<Long> ACTIVE_UPGRADES =
             SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.LONG);
+    private static final EntityDataAccessor<Byte> STATUS_FLAGS =
+            SynchedEntityData.defineId(ClaySoldierEntity.class, EntityDataSerializers.BYTE);
+
+    // Synced combat status bits (issue #24): clients read these for FX/rendering.
+    public static final byte STATUS_COMBUSTING = 0x01;
+    public static final byte STATUS_POISONED = 0x02;
+    public static final byte STATUS_SLOWED = 0x04;
+    public static final byte STATUS_ROOTED = 0x08;
+    public static final byte STATUS_BLINDED = 0x10;
+
+    private static final int STATUS_PARTICLE_INTERVAL = 10;
 
     public static final float MAX_HEALTH = 20.0f;
     private static final float ATTACK_DAMAGE = 1.0f;
@@ -212,6 +223,40 @@ public class ClaySoldierEntity extends Entity {
         builder.define(HURT_FLASH_TICKS, (byte) 0);
         builder.define(ATTACK_SWING_TICKS, (byte) 0);
         builder.define(ACTIVE_UPGRADES, 0L);
+        builder.define(STATUS_FLAGS, (byte) 0);
+    }
+
+    /** Synced combat status byte — see the STATUS_* bit constants (issue #24). */
+    public byte getStatusFlags() {
+        return entityData.get(STATUS_FLAGS);
+    }
+
+    public boolean hasStatusFlag(byte flag) {
+        return (getStatusFlags() & flag) != 0;
+    }
+
+    /** Recomputes and syncs the status byte; cheap no-op when unchanged. */
+    private void syncStatusFlags() {
+        byte flags = 0;
+        if (combustionTicks > 0) {
+            flags |= STATUS_COMBUSTING;
+        }
+        if (poisonTicks > 0) {
+            flags |= STATUS_POISONED;
+        }
+        if (slowTicks > 0) {
+            flags |= STATUS_SLOWED;
+        }
+        if (rootTicks > 0) {
+            flags |= STATUS_ROOTED;
+        }
+        if (blindTicks > 0) {
+            flags |= STATUS_BLINDED;
+        }
+
+        if (flags != entityData.get(STATUS_FLAGS)) {
+            entityData.set(STATUS_FLAGS, flags);
+        }
     }
 
     public int getTeamId() {
@@ -1606,6 +1651,7 @@ public class ClaySoldierEntity extends Entity {
             && target.getSoldierHealth() < target.getSoldierMaxHealth() * LOW_HEALTH_FRACTION) {
             target.setSoldierHealth(Math.min(target.getSoldierMaxHealth(),
                 target.getSoldierHealth() + MELON_TARGET_HEAL));
+            target.emitHealParticles();
             consumeUpgradeUse(UpgradeFlags.GOLD_MELON);
             cachedTarget = null;
             clearTargetMemory();
@@ -1623,6 +1669,12 @@ public class ClaySoldierEntity extends Entity {
         }
 
         target.applyCombatDamage(damage, this);
+
+        // Impact feedback for nearby players (issue #24).
+        if (level() instanceof ServerLevel serverLevel) {
+            serverLevel.sendParticles(ParticleTypes.CRIT,
+                target.getX(), target.getY() + 0.25, target.getZ(), 3, 0.08, 0.08, 0.08, 0.05);
+        }
 
         if (!target.isSoldierDead()) {
             if (hasUpgrade(UpgradeFlags.BLAZEROD)) {
@@ -1777,9 +1829,11 @@ public class ClaySoldierEntity extends Entity {
             if (hasUpgrade(UpgradeFlags.BROWN_MUSHROOM)) {
                 setSoldierHealth(Math.min(maxHealth, health + BROWN_MUSHROOM_HEAL));
                 consumeUpgradeUse(UpgradeFlags.BROWN_MUSHROOM);
+                emitHealParticles();
             } else if (hasUpgrade(UpgradeFlags.FOOD)) {
                 setSoldierHealth(Math.min(maxHealth, health + foodHealNutrition * 0.5f));
                 consumeUpgradeUse(UpgradeFlags.FOOD);
+                emitHealParticles();
             }
         }
 
@@ -1911,6 +1965,42 @@ public class ClaySoldierEntity extends Entity {
             if (zombieDecayTicks <= 0) {
                 applySoldierDamage(MAGMA_BOMB_DAMAGE, (byte) -1);
             }
+        }
+
+        syncStatusFlags();
+        emitStatusParticles();
+    }
+
+    /** Ambient particles broadcasting active status effects to nearby players (issue #24). */
+    private void emitStatusParticles() {
+        if (!(level() instanceof ServerLevel serverLevel)
+            || ((level().getGameTime() + getId()) % STATUS_PARTICLE_INTERVAL) != 0) {
+            return;
+        }
+
+        if (combustionTicks > 0) {
+            serverLevel.sendParticles(ParticleTypes.FLAME,
+                getX(), getY() + 0.25, getZ(), 2, 0.06, 0.08, 0.06, 0.005);
+        }
+        if (poisonTicks > 0) {
+            serverLevel.sendParticles(ParticleTypes.ITEM_SLIME,
+                getX(), getY() + 0.25, getZ(), 2, 0.08, 0.08, 0.08, 0.0);
+        }
+        if (slowTicks > 0) {
+            serverLevel.sendParticles(ParticleTypes.SNOWFLAKE,
+                getX(), getY() + 0.25, getZ(), 1, 0.06, 0.08, 0.06, 0.002);
+        }
+        if (rootTicks > 0) {
+            serverLevel.sendParticles(ParticleTypes.ITEM_SLIME,
+                getX(), getY(), getZ(), 1, 0.1, 0.02, 0.1, 0.0);
+        }
+    }
+
+    /** One-shot heart burst for heals (melon strikes, mushrooms, food). */
+    private void emitHealParticles() {
+        if (level() instanceof ServerLevel serverLevel) {
+            serverLevel.sendParticles(ParticleTypes.HEART,
+                getX(), getY() + 0.4, getZ(), 3, 0.15, 0.15, 0.15, 0.0);
         }
     }
 
@@ -2263,6 +2353,13 @@ public class ClaySoldierEntity extends Entity {
 
 
     void onSoldierKilled(ServerLevel serverLevel) {
+        // Clay crumbles: a burst of clay-block dust marks the death (issue #24).
+        serverLevel.sendParticles(
+            new net.minecraft.core.particles.BlockParticleOption(
+                ParticleTypes.BLOCK,
+                net.minecraft.world.level.block.Blocks.CLAY.defaultBlockState()),
+            getX(), getY() + 0.2, getZ(), 12, 0.12, 0.12, 0.12, 0.04);
+
         if (isNexusSummon()) {
             discard();
             return;

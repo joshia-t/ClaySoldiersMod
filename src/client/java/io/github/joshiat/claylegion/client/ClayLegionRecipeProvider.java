@@ -50,6 +50,7 @@ public class ClayLegionRecipeProvider extends FabricRecipeProvider {
                 turtleRecipes();
                 bunnyRecipes();
                 geckoRecipes();
+                lexiconRecipe();
                 nexusRecipe();
             }
 
@@ -210,6 +211,14 @@ public class ClayLegionRecipeProvider extends FabricRecipeProvider {
                         .unlockedBy("has_sapling", has(mat.sapling()))
                         .save(this.output, key("gecko_doll_" + mat.name()));
                 }
+            }
+
+            private void lexiconRecipe() {
+                this.shapeless(RecipeCategory.MISC, ItemRegistry.LEXICON)
+                    .requires(Items.BOOK)
+                    .requires(Items.CLAY_BALL)
+                    .unlockedBy("has_clay_ball", has(Items.CLAY_BALL))
+                    .save(this.output, key("lexicon"));
             }
 
             private void nexusRecipe() {

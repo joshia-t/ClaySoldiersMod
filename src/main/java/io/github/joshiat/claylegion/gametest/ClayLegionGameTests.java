@@ -333,6 +333,40 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
+    // ── Combat status sync (issue #24) ─────────────────────────────────────
+
+    @GameTest(structure = ARENA, maxTicks = 100)
+    public void statusFlagsSyncToEntityData(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 0);
+        soldier.applyPoison();
+        soldier.applyRoot();
+
+        // Flags propagate on the next status tick.
+        helper.succeedWhen(() -> {
+            if (!soldier.hasStatusFlag(ClaySoldierEntity.STATUS_POISONED)) {
+                helper.fail("Poison should set the synced POISONED status bit");
+            }
+            if (!soldier.hasStatusFlag(ClaySoldierEntity.STATUS_ROOTED)) {
+                helper.fail("Root should set the synced ROOTED status bit");
+            }
+            if (soldier.hasStatusFlag(ClaySoldierEntity.STATUS_COMBUSTING)) {
+                helper.fail("COMBUSTING bit must not be set without a burn");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 160)
+    public void statusFlagsClearWhenEffectsExpire(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 0);
+        soldier.applyRoot(); // 60 ticks
+
+        helper.succeedWhen(() -> {
+            if (soldier.isRooted() || soldier.getStatusFlags() != 0) {
+                helper.fail("Status byte should clear once effects expire, flags=" + soldier.getStatusFlags());
+            }
+        });
+    }
+
     // ── Recipes (issue #21) ────────────────────────────────────────────────
 
     @GameTest(structure = ARENA)
@@ -349,7 +383,7 @@ public final class ClayLegionGameTests {
 
         String[] representative = {
             "soldier_dolls", "soldier_doll_team_red", "horse_doll_dirt", "pegasus_doll_cake",
-            "turtle_doll_cobble", "bunny_doll_pink", "gecko_doll_oak", "clay_nexus"
+            "turtle_doll_cobble", "bunny_doll_pink", "gecko_doll_oak", "clay_nexus", "lexicon"
         };
         for (String path : representative) {
             var key = net.minecraft.resources.ResourceKey.create(

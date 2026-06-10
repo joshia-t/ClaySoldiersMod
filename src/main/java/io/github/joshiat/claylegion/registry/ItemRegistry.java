@@ -5,6 +5,7 @@ import io.github.joshiat.claylegion.entity.mount.GeckoVariant;
 import io.github.joshiat.claylegion.entity.mount.HorseVariant;
 import io.github.joshiat.claylegion.entity.mount.TurtleVariant;
 import io.github.joshiat.claylegion.item.EntitySpawnerItem;
+import io.github.joshiat.claylegion.item.LexiconItem;
 import io.github.joshiat.claylegion.item.SoldierDollItem;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -132,6 +133,10 @@ public final class ItemRegistry {
 
     public static final BlockItem CLAY_NEXUS = track(CLAY_NEXUS_KEY,
         new BlockItem(BlockRegistry.CLAY_NEXUS, props(CLAY_NEXUS_KEY)));
+
+    private static final ResourceKey<Item> LEXICON_KEY = key("lexicon");
+    public static final LexiconItem LEXICON = track(LEXICON_KEY,
+        new LexiconItem(new Item.Properties().stacksTo(1).setId(LEXICON_KEY)));
 
     public static void init() {
         REGISTRATIONS.forEach((k, v) -> Registry.register(BuiltInRegistries.ITEM, k, v));
