@@ -30,6 +30,8 @@ public class GravelProjectileEntity extends ClayProjectileEntity {
     @Override
     protected void onHitSoldier(ClaySoldierEntity target) {
         super.onHitSoldier(target);
+        // Heavy lump of rock: shove the target along the flight path (issue #15).
+        applyImpactKnockback(target, 0.3);
     }
 
     @Override

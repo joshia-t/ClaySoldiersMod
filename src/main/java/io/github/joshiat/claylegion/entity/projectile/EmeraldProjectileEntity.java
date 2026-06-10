@@ -33,6 +33,12 @@ public class EmeraldProjectileEntity extends ClayProjectileEntity {
         return DAMAGE;
     }
 
+    /** Emeralds punch through the first target and can strike a second (issue #15). */
+    @Override
+    protected int getMaxPierces() {
+        return 1;
+    }
+
     @Override
     protected void onHitSoldier(ClaySoldierEntity target) {
         if (shooter instanceof ClaySoldierEntity shooterSoldier
