@@ -254,6 +254,50 @@ public final class ClayLegionGameTests {
         });
     }
 
+    @GameTest(structure = ARENA)
+    public void deathDropsDollAndUpgradesWithDurability(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        ClaySoldierEntity soldier = spawnSoldier(helper, 4);
+        soldier.forceEquipUpgrade(UpgradeFlags.STICK);
+
+        soldier.applySoldierDamage(1000.0f, (byte) -1);
+
+        List<ItemEntity> drops = level.getEntitiesOfClass(
+            ItemEntity.class,
+            helper.getBounds().inflate(2.0),
+            ItemEntity::isAlive
+        );
+
+        ItemEntity dollDrop = null;
+        ItemEntity stickDrop = null;
+        for (ItemEntity drop : drops) {
+            if (drop.getItem().getItem() instanceof SoldierDollItem) {
+                dollDrop = drop;
+            } else if (drop.getItem().is(Items.STICK)) {
+                stickDrop = drop;
+            }
+        }
+
+        if (dollDrop == null) {
+            helper.fail("Dead soldier must drop its doll");
+            return;
+        }
+        if (stickDrop == null) {
+            helper.fail("Dead soldier must drop its stick upgrade (issue #2)");
+            return;
+        }
+        if (DropStackMetadata.getUpgradeFlagOrZero(stickDrop.getItem()) != UpgradeFlags.STICK) {
+            helper.fail("Dropped stick should carry its upgrade flag metadata");
+            return;
+        }
+        if (DropStackMetadata.getUpgradeUsesOrDefault(stickDrop.getItem(), 0) != 20) {
+            helper.fail("Dropped stick should keep its remaining durability, got "
+                + DropStackMetadata.getUpgradeUsesOrDefault(stickDrop.getItem(), 0));
+            return;
+        }
+        helper.succeed();
+    }
+
     // ── Possession ─────────────────────────────────────────────────────────
 
     @GameTest(structure = ARENA)
