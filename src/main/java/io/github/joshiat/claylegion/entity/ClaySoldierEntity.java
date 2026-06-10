@@ -1,6 +1,7 @@
 package io.github.joshiat.claylegion.entity;
 
 import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
+import io.github.joshiat.claylegion.entity.possession.SoldierPossessionManager;
 import io.github.joshiat.claylegion.entity.projectile.ClayProjectileEntity;
 import io.github.joshiat.claylegion.item.SoldierDollItem;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
@@ -181,6 +182,8 @@ public class ClaySoldierEntity extends Entity {
     private double airborneStartY = Double.NaN;
     private Monster cachedMobTarget;
     private ClaySoldierEntity cachedKing;
+    // True while a player remote-controls this soldier; AI is suspended. Transient.
+    private boolean possessed;
     private double targetMemoryX;
     private double targetMemoryY;
     private double targetMemoryZ;
@@ -501,6 +504,108 @@ public class ClaySoldierEntity extends Entity {
 
     public boolean hasUpgrade(long flag) {
         return (activeUpgrades & flag) == flag;
+    }
+
+    /** True while a player is remote-controlling this soldier. */
+    public boolean isPossessed() {
+        return possessed;
+    }
+
+    public void setPossessed(boolean possessed) {
+        this.possessed = possessed;
+        if (possessed) {
+            cachedTarget = null;
+            cachedMobTarget = null;
+            cachedMountTarget = null;
+            clearTargetMemory();
+            setAiState(SoldierAiState.IDLE);
+        }
+    }
+
+    /**
+     * Called when the possessing player left-clicks: melee the nearest enemy in
+     * reach, otherwise fire the ranged weapon at the nearest visible enemy.
+     * Respects the normal attack cooldown so durability/effects behave exactly
+     * like AI combat.
+     */
+    public void possessionTriggerAttack() {
+        if (isSoldierDead() || attackCooldown > 0) {
+            return;
+        }
+
+        ClaySoldierEntity meleeTarget = findNearestEnemyWithin(ATTACK_RANGE);
+        if (meleeTarget != null) {
+            setAiState(SoldierAiState.ATTACKING);
+            faceTarget(meleeTarget);
+            performMeleeAttack(meleeTarget);
+            return;
+        }
+
+        ClaySoldierEntity rangedTarget = findNearestEnemyWithin(RANGED_ATTACK_RANGE);
+        if (rangedTarget != null && SoldierTargetingHelper.hasLineOfSight(this, rangedTarget)) {
+            faceTarget(rangedTarget);
+            if (tryRangedAttack(rangedTarget)) {
+                setAiState(SoldierAiState.ATTACKING);
+            }
+            return;
+        }
+
+        // Swing at air so the player gets feedback even on a miss.
+        setAttackSwingTicks(ATTACK_SWING_DURATION);
+    }
+
+    private ClaySoldierEntity findNearestEnemyWithin(double range) {
+        List<ClaySoldierEntity> candidates = level().getEntitiesOfClass(
+            ClaySoldierEntity.class,
+            getBoundingBox().inflate(range, 1.0, range),
+            candidate -> candidate != this
+                && candidate.isAlive()
+                && !candidate.isRemoved()
+                && !candidate.isSoldierDead()
+                && candidate.getTeamId() != getTeamId()
+        );
+
+        ClaySoldierEntity best = null;
+        double bestSq = range * range;
+        for (int i = 0, size = candidates.size(); i < size; i++) {
+            ClaySoldierEntity candidate = candidates.get(i);
+            double distSq = distanceToSqr(candidate);
+            if (distSq <= bestSq) {
+                best = candidate;
+                bestSq = distSq;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Reduced server tick while possessed: status effects, pickups, and
+     * adjacent mount boarding stay active, but all autonomous AI is suspended —
+     * the player's inputs (relayed by SoldierPossessionManager) drive movement.
+     */
+    private void possessedCombatTick(long gameTime) {
+        if (attackCooldown > 0) {
+            attackCooldown--;
+        }
+        if (getHurtFlashTicks() > 0) {
+            setHurtFlashTicks(getHurtFlashTicks() - 1);
+        }
+        if (getAttackSwingTicks() > 0) {
+            setAttackSwingTicks(getAttackSwingTicks() - 1);
+        }
+
+        tickStatusEffects();
+        tryPickupNearbyUpgrade(gameTime);
+
+        // Walking into a mount with a free seat boards it.
+        if (!isPassenger() && !hasUpgrade(UpgradeFlags.BONE)) {
+            cachedMountTarget = SoldierTargetingHelper.updateMountTargetCache(this, cachedMountTarget);
+            if (cachedMountTarget != null
+                && distanceToSqr(cachedMountTarget) <= MOUNT_BOARD_RANGE_SQ
+                && cachedMountTarget.getMaxPassengers() > cachedMountTarget.getPassengers().size()) {
+                startRiding(cachedMountTarget);
+            }
+        }
     }
 
     /** Nether wart berserkers attack everything, including their own team. */
@@ -1055,6 +1160,15 @@ public class ClaySoldierEntity extends Entity {
     @Override
     public InteractionResult interact(Player player, InteractionHand hand, Vec3 hitPos) {
         ItemStack held = player.getItemInHand(hand);
+
+        // Empty hand: send your soul into the soldier (remote control mode).
+        if (held.isEmpty() && hand == InteractionHand.MAIN_HAND) {
+            if (!level().isClientSide()) {
+                SoldierPossessionManager.getInstance().startPossession(player, this);
+            }
+            return InteractionResult.SUCCESS;
+        }
+
         if (!UpgradeRegistry.supports(held)) {
             return InteractionResult.PASS;
         }
@@ -1331,6 +1445,11 @@ public class ClaySoldierEntity extends Entity {
         }
 
         if (isSoldierDead()) {
+            return;
+        }
+
+        if (possessed) {
+            possessedCombatTick(level().getGameTime());
             return;
         }
 
@@ -1784,6 +1903,19 @@ public class ClaySoldierEntity extends Entity {
             return;
         }
         combustionTicks = Math.max(combustionTicks, ticks);
+    }
+
+    /** True while burn damage-over-time is active. */
+    public boolean isCombusting() {
+        return combustionTicks > 0;
+    }
+
+    /**
+     * Directly equip an upgrade by flag, running the normal validation and
+     * on-equip effects. Used by debug tooling and game tests.
+     */
+    public boolean forceEquipUpgrade(long flag) {
+        return equipUpgrade(UpgradeRegistry.getSpec(flag), 0);
     }
 
     public void applyPoison() {
@@ -2374,6 +2506,11 @@ public class ClaySoldierEntity extends Entity {
 
         Entity knockbackSource = source.getDirectEntity() != null ? source.getDirectEntity() : attacker;
         applySoldierDamage(resolvedAmount, (byte) -1, knockbackSource, kind);
+
+        // Fire damage sets clay alight (unless cactus mitigates it).
+        if (kind == SoldierDamageKind.FIRE && !isSoldierDead()) {
+            applyBurn(COMBUSTION_DURATION_TICKS);
+        }
         return !isSoldierDead();
     }
 

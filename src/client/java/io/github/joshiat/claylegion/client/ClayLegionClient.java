@@ -9,8 +9,12 @@ import io.github.joshiat.claylegion.client.render.MountEntityRenderer;
 import io.github.joshiat.claylegion.client.render.ModEntityModelLayers;
 import io.github.joshiat.claylegion.client.render.PegasusMountRenderer;
 import io.github.joshiat.claylegion.client.render.TurtleMountRenderer;
+import io.github.joshiat.claylegion.client.possession.PossessionClientState;
+import io.github.joshiat.claylegion.network.PossessionEndS2CPacket;
+import io.github.joshiat.claylegion.network.PossessionStartS2CPacket;
 import io.github.joshiat.claylegion.registry.EntityRegistry;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 
 public class ClayLegionClient implements ClientModInitializer {
@@ -28,5 +32,19 @@ public class ClayLegionClient implements ClientModInitializer {
 		EntityRendererRegistry.register(EntityRegistry.SNOW_PROJECTILE, DebugPlaceholderEntityRenderer::new);
 		EntityRendererRegistry.register(EntityRegistry.FIRE_CHARGE_PROJECTILE, DebugPlaceholderEntityRenderer::new);
 		EntityRendererRegistry.register(EntityRegistry.EMERALD_PROJECTILE, DebugPlaceholderEntityRenderer::new);
+
+		registerPacketReceivers();
+	}
+
+	private static void registerPacketReceivers() {
+		// Possession start: tell the camera mixin to follow this soldier entity.
+		ClientPlayNetworking.registerGlobalReceiver(PossessionStartS2CPacket.TYPE,
+			(packet, ctx) -> PossessionClientState.onPossessionStart(packet.soldierEntityId()));
+
+		// Possession end: restore camera to the local player.
+		ClientPlayNetworking.registerGlobalReceiver(PossessionEndS2CPacket.TYPE,
+			(packet, ctx) -> PossessionClientState.onPossessionEnd());
+
+		// PossessionAttackC2SPacket is serverbound — no client receiver needed.
 	}
 }

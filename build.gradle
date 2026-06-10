@@ -17,6 +17,15 @@ repositories {
 loom {
 	splitEnvironmentSourceSets()
 
+	runs {
+		gameTestServer {
+			server()
+			name = "GameTest Server"
+			runDir = "build/gametest"
+			vmArg "-Dfabric-api.gametest"
+		}
+	}
+
 	mods {
 		"clay-legion" {
 			sourceSet sourceSets.main
@@ -41,7 +50,13 @@ dependencies {
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 	implementation "org.yaml:snakeyaml:2.2"
-	
+
+	testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+tasks.named("test") {
+	useJUnitPlatform()
 }
 
 processResources {
