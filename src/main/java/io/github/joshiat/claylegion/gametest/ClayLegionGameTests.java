@@ -298,6 +298,41 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
+    // ── Incompatibility rules (issue #19) ──────────────────────────────────
+
+    @GameTest(structure = ARENA)
+    public void incompatibilitiesAreSymmetric(GameTestHelper helper) {
+        // Both equip orders must be rejected for every banned pair.
+        long[][] bannedPairs = {
+            {UpgradeFlags.LEATHER, UpgradeFlags.RABBIT_HIDE},
+            {UpgradeFlags.DIAMOND, UpgradeFlags.DIAMOND_BLOCK},
+            {UpgradeFlags.SUGAR, UpgradeFlags.DIAMOND},
+            {UpgradeFlags.FEATHER, UpgradeFlags.IRON_INGOT},
+            {UpgradeFlags.GUNPOWDER, UpgradeFlags.MAGMA_CREAM},
+            {UpgradeFlags.ENDER_PEARL, UpgradeFlags.WHEAT_SEEDS},
+        };
+
+        for (long[] pair : bannedPairs) {
+            for (int order = 0; order < 2; order++) {
+                long first = pair[order];
+                long second = pair[1 - order];
+
+                ClaySoldierEntity soldier = spawnSoldier(helper, 0);
+                if (!soldier.forceEquipUpgrade(first)) {
+                    helper.fail("Fresh soldier should accept " + UpgradeFlags.nameOf(first));
+                    return;
+                }
+                if (soldier.forceEquipUpgrade(second)) {
+                    helper.fail(UpgradeFlags.nameOf(second) + " must be rejected while holding "
+                        + UpgradeFlags.nameOf(first));
+                    return;
+                }
+                soldier.discard();
+            }
+        }
+        helper.succeed();
+    }
+
     // ── Projectile payloads (issue #15) ────────────────────────────────────
 
     @GameTest(structure = ARENA, maxTicks = 100)

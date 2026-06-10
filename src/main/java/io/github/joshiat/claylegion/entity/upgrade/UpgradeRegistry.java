@@ -137,6 +137,33 @@ public final class UpgradeRegistry {
         DROP_ITEM_BY_BIT[Long.numberOfTrailingZeros(FOOD)] = Items.BREAD;
         DROP_ITEM_BY_BIT[Long.numberOfTrailingZeros(SHEAR_LEFT)] = Items.SHEARS;
 
+        // Incompatibility is symmetric by definition: if A bans B, B bans A.
+        // Manual pair declarations are easy to miss in one direction
+        // (e.g. sugar banned diamond, but diamond didn't ban sugar), so
+        // propagate the closure here instead of trusting the table (issue #19).
+        long[] symmetricBans = new long[64];
+        for (int i = 0; i < 64; i++) {
+            if (SPEC_BY_BIT[i] != null) {
+                symmetricBans[i] = SPEC_BY_BIT[i].incompatibleWith();
+            }
+        }
+        for (int i = 0; i < 64; i++) {
+            long banned = symmetricBans[i];
+            while (banned != 0L) {
+                long bit = Long.lowestOneBit(banned);
+                banned &= ~bit;
+                symmetricBans[Long.numberOfTrailingZeros(bit)] |= 1L << i;
+            }
+        }
+        for (int i = 0; i < 64; i++) {
+            UpgradeSpec spec = SPEC_BY_BIT[i];
+            if (spec != null && spec.incompatibleWith() != symmetricBans[i]) {
+                SPEC_BY_BIT[i] = new UpgradeSpec(spec.flag(), spec.slot(), spec.maxUses(),
+                    spec.requiresAll(), spec.requiresAny(), symmetricBans[i]);
+            }
+        }
+        map.replaceAll((item, spec) -> SPEC_BY_BIT[spec.bitIndex()]);
+
         ITEM_TO_SPEC = Collections.unmodifiableMap(map);
     }
 
@@ -164,14 +191,16 @@ public final class UpgradeRegistry {
             return exact;
         }
 
+        // Resolve via SPEC_BY_BIT so tag fallbacks always see the
+        // post-symmetrization specs.
         if (stack.is(ItemTags.WOOL)) {
-            return WOOL_SPEC;
+            return getSpec(WOOL);
         }
         if (stack.is(ItemTags.WOODEN_BUTTONS)) {
-            return WOOD_BUTTON_SPEC;
+            return getSpec(WOOD_BUTTON);
         }
         if (stack.has(DataComponents.FOOD) && !stack.is(Items.ROTTEN_FLESH)) {
-            return FOOD_SPEC;
+            return getSpec(FOOD);
         }
 
         return null;
