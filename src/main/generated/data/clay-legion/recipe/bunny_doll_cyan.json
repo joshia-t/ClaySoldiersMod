@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "group": "clay-legion:bunny_doll",
+  "key": {
+    "S": "minecraft:soul_sand",
+    "W": "minecraft:cyan_wool"
+  },
+  "pattern": [
+    "WSW"
+  ],
+  "result": {
+    "count": 4,
+    "id": "clay-legion:cyan_bunny_spawner"
+  }
+}

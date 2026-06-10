@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "group": "clay-legion:turtle_doll",
+  "key": {
+    "S": "minecraft:soul_sand",
+    "T": "minecraft:cake"
+  },
+  "pattern": [
+    " TT",
+    "SST"
+  ],
+  "result": {
+    "count": 2,
+    "id": "clay-legion:cake_turtle_spawner"
+  }
+}

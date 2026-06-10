@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "group": "clay-legion:team_doll",
+  "ingredients": [
+    "clay-legion:soldier_doll",
+    "minecraft:white_dye"
+  ],
+  "result": {
+    "components": {
+      "minecraft:custom_data": {
+        "team": 0
+      }
+    },
+    "id": "clay-legion:soldier_doll"
+  }
+}
