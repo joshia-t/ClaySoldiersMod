@@ -21,6 +21,9 @@
 		"client": [
 			"io.github.joshiat.claylegion.client.ClayLegionClient"
 		],
+		"fabric-gametest": [
+			"io.github.joshiat.claylegion.gametest.ClayLegionGameTests"
+		],
 		"fabric-datagen": [
 			"io.github.joshiat.claylegion.client.ClayLegionDataGenerator"
 		]

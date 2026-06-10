@@ -70,14 +70,38 @@ public final class UpgradeFlags {
     public static final long COAL           = 1L << 46;
     public static final long BLAZE_POWDER   = 1L << 47;
     public static final long SUGAR          = 1L << 48;
-    public static final long SUGAR_CANE     = 1L << 49;
-    public static final long ARROW          = 1L << 50;
+    public static final long RABBIT_HIDE    = 1L << 49;
+    public static final long RABBIT_FOOT    = 1L << 50;
     public static final long WHEAT_SEEDS    = 1L << 51;
     public static final long BONE           = 1L << 52;
     public static final long GOLD_MELON     = 1L << 53;
-    public static final long GOLD_MELON_BLOCK = 1L << 54;
+    public static final long PRISMARINE_SHARD = 1L << 54;
+    public static final long PRISMARINE_CRYSTALS = 1L << 55;
+    public static final long SPONGE         = 1L << 56;
+    public static final long ROTTEN_FLESH   = 1L << 57;
+    public static final long FIREWORK_ROCKET = 1L << 58;
+    public static final long CONCRETE_POWDER = 1L << 59;
 
-    // Bits 55–59 reserved for future upgrades
+    private static final String[] NAMES = new String[64];
+
+    static {
+        for (java.lang.reflect.Field field : UpgradeFlags.class.getDeclaredFields()) {
+            if (field.getType() == long.class
+                && java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                try {
+                    NAMES[Long.numberOfTrailingZeros(field.getLong(null))] = field.getName();
+                } catch (IllegalAccessException ignored) {
+                }
+            }
+        }
+    }
+
+    /** Debug name for a single upgrade bit (e.g. "STICK"), or "BIT_n" if unknown. */
+    public static String nameOf(long flag) {
+        int idx = Long.numberOfTrailingZeros(flag);
+        String name = idx >= 0 && idx < 64 ? NAMES[idx] : null;
+        return name != null ? name : "BIT_" + idx;
+    }
 
     private UpgradeFlags() {}
 }

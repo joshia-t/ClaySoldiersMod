@@ -10,7 +10,11 @@ import io.github.joshiat.claylegion.entity.RuntimeTelemetry;
 import io.github.joshiat.claylegion.entity.TargetingProfiler;
 import io.github.joshiat.claylegion.entity.mount.BaseMountEntity;
 import io.github.joshiat.claylegion.entity.mount.TurtleMountEntity;
-import io.github.joshiat.claylegion.entity.upgrade.UpgradeFlags;
+import io.github.joshiat.claylegion.entity.possession.PossessionSession;
+import io.github.joshiat.claylegion.entity.possession.SoldierPossessionManager;
+import io.github.joshiat.claylegion.network.PossessionAttackC2SPacket;
+import io.github.joshiat.claylegion.network.PossessionEndS2CPacket;
+import io.github.joshiat.claylegion.network.PossessionStartS2CPacket;
 import io.github.joshiat.claylegion.registry.BlockEntityRegistry;
 import io.github.joshiat.claylegion.registry.BlockRegistry;
 import io.github.joshiat.claylegion.registry.CreativeTabRegistry;
@@ -19,6 +23,10 @@ import io.github.joshiat.claylegion.registry.ItemRegistry;
 import io.github.joshiat.claylegion.render.RenderTuning;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -52,8 +60,35 @@ public class ClayLegion implements ModInitializer {
 		ItemRegistry.init();
 		CreativeTabRegistry.init();
 		ClayLegionConfig.loadAndApply(LOGGER);
+		registerPackets();
 		registerCommands();
 		LOGGER.info("Clay Legion initialized.");
+	}
+
+	private static void registerPackets() {
+		// Clientbound: possession camera start/end.
+		PayloadTypeRegistry.clientboundPlay()
+			.register(PossessionStartS2CPacket.TYPE, PossessionStartS2CPacket.CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+			.register(PossessionEndS2CPacket.TYPE, PossessionEndS2CPacket.CODEC);
+
+		// Serverbound: possessing player requests the soldier to attack.
+		PayloadTypeRegistry.serverboundPlay()
+			.register(PossessionAttackC2SPacket.TYPE, PossessionAttackC2SPacket.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(PossessionAttackC2SPacket.TYPE,
+			(packet, ctx) -> {
+				ServerPlayer player = ctx.player();
+				PossessionSession session = SoldierPossessionManager.getInstance().getSession(player);
+				if (session != null) {
+					session.soldier().possessionTriggerAttack();
+				}
+			});
+
+		// Drive the server-side possession manager once per server tick.
+		ServerTickEvents.END_SERVER_TICK.register(
+			server -> SoldierPossessionManager.getInstance().tick(server));
+		ServerLifecycleEvents.SERVER_STOPPED.register(
+			server -> SoldierPossessionManager.getInstance().clearAll());
 	}
 
 	private static void registerCommands() {
@@ -225,10 +260,9 @@ public class ClayLegion implements ModInitializer {
 
 		String message = "ClaySoldier inspect | activeUpgrades=0x"
 			+ Long.toHexString(soldier.getActiveUpgrades()).toUpperCase(Locale.ROOT)
-			+ ", stick=" + soldier.hasUpgrade(UpgradeFlags.STICK)
-			+ ", stickUses=" + soldier.getStickUsesRemaining()
+			+ " [" + soldier.describeUpgrades() + "]"
 			+ ", memory=" + String.format(Locale.ROOT, "%.2f", soldier.getTargetMemoryConfidence())
-			+ ", health=" + String.format(Locale.ROOT, "%.2f", soldier.getSoldierHealth())
+			+ ", health=" + String.format(Locale.ROOT, "%.2f/%.2f", soldier.getSoldierHealth(), soldier.getSoldierMaxHealth())
 			+ ", combatState=" + soldier.getAiState().name()
 			+ ", " + RuntimeTelemetry.snapshot();
 

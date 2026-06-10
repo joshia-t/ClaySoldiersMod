@@ -3,7 +3,8 @@
 	"package": "io.github.joshiat.claylegion.client.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
-		"ExampleClientMixin"
+		"ExampleClientMixin",
+		"PossessionCameraMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

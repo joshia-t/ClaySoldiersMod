@@ -137,7 +137,8 @@ public abstract class ClayProjectileEntity extends Entity {
 
     protected void onHitSoldier(ClaySoldierEntity target) {
         // Default behavior: apply damage. Subclasses override for variant-specific effects.
-        target.applySoldierDamage(getDamage(), (byte) (shooter instanceof ClaySoldierEntity s ? s.getTeamId() : -1));
+        target.applySoldierDamage(getDamage(), (byte) (shooter instanceof ClaySoldierEntity s ? s.getTeamId() : -1),
+            shooter, ClaySoldierEntity.SoldierDamageKind.RANGED);
     }
 
     @Override
