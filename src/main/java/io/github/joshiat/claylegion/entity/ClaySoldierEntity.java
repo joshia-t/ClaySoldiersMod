@@ -1985,6 +1985,21 @@ public class ClaySoldierEntity extends Entity {
         return slowTicks > 0;
     }
 
+    /** True while red-mushroom poison damage-over-time is active. */
+    public boolean isPoisoned() {
+        return poisonTicks > 0;
+    }
+
+    /** True while redstone blindness suppresses targeting. */
+    public boolean isBlinded() {
+        return blindTicks > 0;
+    }
+
+    /** True while a slimeball root pins this soldier in place. */
+    public boolean isRooted() {
+        return rootTicks > 0;
+    }
+
     private boolean tryAcquireMount() {
         if (getAiState() != SoldierAiState.IDLE) {
             return false;

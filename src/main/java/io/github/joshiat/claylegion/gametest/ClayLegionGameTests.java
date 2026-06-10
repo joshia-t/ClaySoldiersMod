@@ -333,6 +333,76 @@ public final class ClayLegionGameTests {
         helper.succeed();
     }
 
+    // ── Status effects (issue #20) ─────────────────────────────────────────
+
+    @GameTest(structure = ARENA, maxTicks = 160)
+    public void poisonDamagesOverTimeAndExpires(GameTestHelper helper) {
+        ClaySoldierEntity soldier = spawnSoldier(helper, 0);
+        float before = soldier.getSoldierHealth();
+        soldier.applyPoison();
+
+        if (!soldier.isPoisoned()) {
+            helper.fail("applyPoison should start the poison effect");
+            return;
+        }
+
+        helper.succeedWhen(() -> {
+            boolean damaged = soldier.getSoldierHealth() < before;
+            boolean expired = !soldier.isPoisoned();
+            if (!damaged || !expired) {
+                helper.fail("Poison should tick damage and then expire (health="
+                    + soldier.getSoldierHealth() + ", poisoned=" + soldier.isPoisoned() + ")");
+            }
+            if (soldier.isSoldierDead()) {
+                helper.fail("Poison must never be lethal");
+            }
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 100)
+    public void blindnessDropsTargetAndSuppressesAggro(GameTestHelper helper) {
+        ClaySoldierEntity red = spawnSoldier(helper, 1);
+        ClaySoldierEntity blue = spawnSoldier(helper, 2);
+        blue.setPos(red.getX() + 0.9, red.getY(), red.getZ());
+
+        // Let them acquire each other, then blind one and verify it disengages.
+        helper.runAfterDelay(10, () -> {
+            red.applyBlindness();
+            if (!red.isBlinded()) {
+                helper.fail("applyBlindness should start the blindness effect");
+                return;
+            }
+            if (red.getCachedTarget() != null) {
+                helper.fail("Blindness must drop the current target");
+                return;
+            }
+            helper.succeed();
+        });
+    }
+
+    @GameTest(structure = ARENA, maxTicks = 100)
+    public void rootPinsSoldierInPlace(GameTestHelper helper) {
+        ClaySoldierEntity red = spawnSoldier(helper, 1);
+        ClaySoldierEntity blue = spawnSoldier(helper, 2);
+        // Enemy nearby so the rooted soldier has every reason to chase.
+        blue.setPos(red.getX() + 2.5, red.getY(), red.getZ());
+        blue.forceEquipUpgrade(UpgradeFlags.WHEAT);
+
+        red.applyRoot();
+        double startX = red.getX();
+        double startZ = red.getZ();
+
+        helper.runAfterDelay(40, () -> {
+            double driftSq = (red.getX() - startX) * (red.getX() - startX)
+                + (red.getZ() - startZ) * (red.getZ() - startZ);
+            if (driftSq > 0.25) {
+                helper.fail("Rooted soldier should stay pinned, drifted " + Math.sqrt(driftSq) + " blocks");
+                return;
+            }
+            helper.succeed();
+        });
+    }
+
     // ── Projectile payloads (issue #15) ────────────────────────────────────
 
     @GameTest(structure = ARENA, maxTicks = 100)
