@@ -84,6 +84,20 @@ public final class NexusSummonIndex {
         return count;
     }
 
+    /** Runs an action on every live summon of a nexus (order changes, issue #32). */
+    public void forEachActive(UUID nexusId, java.util.function.Consumer<ClaySoldierEntity> action) {
+        HashSet<ClaySoldierEntity> summons = byNexus.get(nexusId);
+        if (summons == null || summons.isEmpty()) {
+            return;
+        }
+        for (ClaySoldierEntity soldier : new ArrayList<>(summons)) {
+            if (soldier != null && soldier.isAlive() && !soldier.isRemoved()
+                && soldier.isNexusSummon() && nexusId.equals(soldier.getNexusOriginId())) {
+                action.accept(soldier);
+            }
+        }
+    }
+
     public int removeAllForNexus(ServerLevel level, UUID nexusId) {
         HashSet<ClaySoldierEntity> summons = byNexus.remove(nexusId);
         if (summons == null || summons.isEmpty()) {

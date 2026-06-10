@@ -203,6 +203,9 @@ public class ClaySoldierEntity extends Entity {
     private long lastShoutTick = Long.MIN_VALUE;
     private Vec3 cachedSeparation = Vec3.ZERO;
     private UUID nexusOriginId;
+    // Standing orders from the owning nexus (issue #32).
+    private NexusOrder nexusOrder = NexusOrder.MARCH;
+    private net.minecraft.core.BlockPos nexusHomePos;
 
     // Client interpolation (issue #28): position-sync packets only interpolate
     // for entities exposing an InterpolationHandler via getInterpolation();
@@ -414,6 +417,26 @@ public class ClaySoldierEntity extends Entity {
 
     public void setNexusOriginId(UUID nexusOriginId) {
         this.nexusOriginId = nexusOriginId;
+    }
+
+    public NexusOrder getNexusOrder() {
+        return nexusOrder;
+    }
+
+    public void setNexusOrder(NexusOrder order) {
+        this.nexusOrder = order != null ? order : NexusOrder.MARCH;
+    }
+
+    /** Anchor position guards return to; set by the spawning nexus. */
+    public void setNexusHomePos(net.minecraft.core.BlockPos pos) {
+        this.nexusHomePos = pos;
+    }
+
+    private static final double GUARD_RADIUS_SQ = 12.0 * 12.0;
+    private static final double GUARD_MAX_PURSUIT_SQ = 16.0 * 16.0;
+
+    private boolean holdsPosition() {
+        return nexusOrder == NexusOrder.HOLD;
     }
 
     public UpgradeState getUpgradeState() {
@@ -1466,8 +1489,15 @@ public class ClaySoldierEntity extends Entity {
                 targetVisible = updateAwarenessAndTarget(gameTime);
             }
 
+            // Guard order: abandon any chase that strays too far from home (issue #32).
+            if (nexusOrder == NexusOrder.GUARD && nexusHomePos != null && cachedTarget != null
+                && nexusHomePos.distToCenterSqr(position()) > GUARD_MAX_PURSUIT_SQ) {
+                cachedTarget = null;
+                clearTargetMemory();
+            }
+
             if (cachedTarget == null) {
-                if (!isAutoTargetingSuppressed()) {
+                if (!isAutoTargetingSuppressed() && !holdsPosition()) {
                     if (chaseTargetMemory(gameTime)) {
                         setAiState(SoldierAiState.CHASING);
                         return;
@@ -1510,6 +1540,14 @@ public class ClaySoldierEntity extends Entity {
 
                 setAiState(SoldierAiState.IDLE);
 
+                // Guard order: drift back inside the home radius (issue #32).
+                if (nexusOrder == NexusOrder.GUARD && nexusHomePos != null
+                    && nexusHomePos.distToCenterSqr(position()) > GUARD_RADIUS_SQ) {
+                    setAiState(SoldierAiState.CHASING);
+                    chasePosition(Vec3.atCenterOf(nexusHomePos));
+                    return;
+                }
+
                 boolean acquiredMount;
                 if (profiling) {
                     long mountAcquireStart = System.nanoTime();
@@ -1538,6 +1576,12 @@ public class ClaySoldierEntity extends Entity {
             }
 
             if (!targetVisible) {
+                // Hold order: never leave the post to hunt a lost target.
+                if (holdsPosition()) {
+                    setAiState(SoldierAiState.IDLE);
+                    applyIdleBraking();
+                    return;
+                }
                 setAiState(SoldierAiState.CHASING);
                 if (!chaseTargetMemory(gameTime)) {
                     cachedTarget = null;
@@ -1587,6 +1631,10 @@ public class ClaySoldierEntity extends Entity {
                         performMeleeAttack(cachedTarget);
                     }
                 }
+            } else if (holdsPosition()) {
+                // Hold order: stand ground; the target must come to us.
+                setAiState(SoldierAiState.IDLE);
+                applyIdleBraking();
             } else {
                 setAiState(SoldierAiState.CHASING);
                 if (profiling) {
@@ -2449,6 +2497,13 @@ public class ClaySoldierEntity extends Entity {
             hasUpgrade(UpgradeFlags.ENDER_PEARL) ? ZOMBIE_DECAY_TICKS : -1);
         foodHealNutrition = input.getByteOr("FoodHealNutrition", (byte) 4);
         resurrectionUsesRemaining = input.getIntOr("ResurrectionUses", DEFAULT_RESURRECTION_BUDGET);
+        nexusOrder = NexusOrder.fromId(input.getByteOr("NexusOrder", (byte) 0));
+        if (input.getInt("NexusHomeX").isPresent()) {
+            nexusHomePos = new net.minecraft.core.BlockPos(
+                input.getIntOr("NexusHomeX", 0),
+                input.getIntOr("NexusHomeY", 0),
+                input.getIntOr("NexusHomeZ", 0));
+        }
         String persistedNexusOriginId = input.getString("NexusOriginId").orElse(null);
         if (persistedNexusOriginId != null && !persistedNexusOriginId.isBlank()) {
             try {
@@ -2490,6 +2545,14 @@ public class ClaySoldierEntity extends Entity {
         }
         output.putByte("FoodHealNutrition", foodHealNutrition);
         output.putInt("ResurrectionUses", resurrectionUsesRemaining);
+        if (nexusOrder != NexusOrder.MARCH) {
+            output.putByte("NexusOrder", nexusOrder.id);
+        }
+        if (nexusHomePos != null) {
+            output.putInt("NexusHomeX", nexusHomePos.getX());
+            output.putInt("NexusHomeY", nexusHomePos.getY());
+            output.putInt("NexusHomeZ", nexusHomePos.getZ());
+        }
         if (nexusOriginId != null) {
             output.putString("NexusOriginId", nexusOriginId.toString());
         }
