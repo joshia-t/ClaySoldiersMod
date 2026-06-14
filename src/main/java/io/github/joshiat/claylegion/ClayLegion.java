@@ -126,7 +126,9 @@ public class ClayLegion implements ModInitializer {
 					.then(literal("inspect")
 						.executes(ctx -> debugInspect(ctx.getSource())))
 					.then(literal("inspectmount")
-						.executes(ctx -> debugInspectMount(ctx.getSource()))))
+						.executes(ctx -> debugInspectMount(ctx.getSource())))
+					.then(literal("navmap")
+						.executes(ctx -> debugNavMap(ctx.getSource()))))
 				.then(literal("profiler")
 					.then(literal("enable")
 						.executes(ctx -> {
@@ -266,10 +268,79 @@ public class ClayLegion implements ModInitializer {
 			+ ", memory=" + String.format(Locale.ROOT, "%.2f", soldier.getTargetMemoryConfidence())
 			+ ", health=" + String.format(Locale.ROOT, "%.2f/%.2f", soldier.getSoldierHealth(), soldier.getSoldierMaxHealth())
 			+ ", combatState=" + soldier.getAiState().name()
+			+ ", " + soldier.describeExploreState()
 			+ ", " + RuntimeTelemetry.snapshot();
 
 		Component inspectMessage = Component.literal(message);
 		source.sendSuccess(() -> inspectMessage, false);
+		return 1;
+	}
+
+	/**
+	 * Renders the looked-at soldier's TEAM navigation map as particles so the
+	 * swarm's shared "anti-pheromone" memory is visible while tuning:
+	 *  - green crit/villager = VISITED,
+	 *  - smoke = BLOCKED,
+	 *  - directional dust = flow vector toward the recommended exit.
+	 */
+	private static int debugNavMap(CommandSourceStack source) {
+		ServerPlayer player;
+		try {
+			player = source.getPlayerOrException();
+		} catch (Exception e) {
+			source.sendFailure(Component.literal("This command can only be used by a player."));
+			return 0;
+		}
+
+		ClaySoldierEntity soldier = raycastSoldier(player, 24.0D);
+		if (soldier == null) {
+			source.sendFailure(Component.literal("Look at a Clay Soldier to pick whose team map to show."));
+			return 0;
+		}
+
+		if (!(player.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
+			return 0;
+		}
+
+		int teamId = soldier.getTeamId();
+		var nav = io.github.joshiat.claylegion.entity.nav.TeamNavIndex.get(serverLevel).forTeam(teamId);
+		long gameTime = serverLevel.getGameTime();
+		double cx = player.getX();
+		double cz = player.getZ();
+		double renderRadiusSq = 48.0 * 48.0;
+		int[] counts = new int[3]; // visited, blocked, flowed
+
+		nav.forEachLiveCell(gameTime, (key, state, flow) -> {
+			double x = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.unpackX(key) + 0.5;
+			double y = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.unpackY(key) + 0.3;
+			double z = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.unpackZ(key) + 0.5;
+			if ((x - cx) * (x - cx) + (z - cz) * (z - cz) > renderRadiusSq) {
+				return;
+			}
+
+			if (state == io.github.joshiat.claylegion.entity.nav.TeamNavMemory.CellState.BLOCKED) {
+				counts[1]++;
+				serverLevel.sendParticles(net.minecraft.core.particles.ParticleTypes.SMOKE, x, y, z, 4, 0.15, 0.15, 0.15, 0.0);
+			} else if (state == io.github.joshiat.claylegion.entity.nav.TeamNavMemory.CellState.VISITED) {
+				counts[0]++;
+				serverLevel.sendParticles(net.minecraft.core.particles.ParticleTypes.HAPPY_VILLAGER, x, y, z, 2, 0.1, 0.1, 0.1, 0.0);
+			}
+
+			if (flow != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+				counts[2]++;
+				int fx = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDx(flow);
+				int fz = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDz(flow);
+				for (int step = 1; step <= 3; step++) {
+					serverLevel.sendParticles(net.minecraft.core.particles.ParticleTypes.COMPOSTER,
+						x + fx * step * 0.25, y + 0.2, z + fz * step * 0.25, 1, 0.0, 0.0, 0.0, 0.0);
+				}
+			}
+		});
+
+		source.sendSuccess(() -> Component.literal(
+			"Nav map for team " + teamId + ": " + nav.size() + " cells ("
+				+ counts[0] + " visited, " + counts[1] + " blocked, " + counts[2] + " with flow), "
+				+ "routeKnown=" + nav.routeFoundRecently(gameTime)), false);
 		return 1;
 	}
 

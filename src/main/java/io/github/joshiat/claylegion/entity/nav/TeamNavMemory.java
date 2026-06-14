@@ -45,6 +45,8 @@ public final class TeamNavMemory {
 
     public static final int ENTRY_TTL_TICKS = 6000; // 5 minutes
     public static final int MAX_ENTRIES = 8192;
+    /** How long a discovered route is trusted before the swarm re-probes. */
+    public static final int ROUTE_MEMORY_TICKS = 1200; // 1 minute
 
     private static final class Cell {
         CellState state;
@@ -55,9 +57,26 @@ public final class TeamNavMemory {
     private final Map<Long, Cell> cells = new HashMap<>();
     private final ArrayDeque<Long> writeOrder = new ArrayDeque<>();
 
+    // When any soldier last threaded a route toward its goal through here.
+    // While stale, "naughty" explorers ignore blocked markers to re-probe.
+    private long lastRouteFoundTick = Long.MIN_VALUE;
+
     public static long pack(int x, int y, int z) {
         // 26/12/26-bit packing, mirroring BlockPos.asLong semantics.
         return ((long) (x & 0x3FFFFFF) << 38) | ((long) (y & 0xFFF) << 26) | (z & 0x3FFFFFF);
+    }
+
+    // Sign-extending unpack, mirroring BlockPos.getX/getY/getZ.
+    public static int unpackX(long key) {
+        return (int) (key << 0 >> 38);
+    }
+
+    public static int unpackY(long key) {
+        return (int) (key << 26 >> 52);
+    }
+
+    public static int unpackZ(long key) {
+        return (int) (key << 38 >> 38);
     }
 
     public void markVisited(long key, long gameTime) {
@@ -99,6 +118,17 @@ public final class TeamNavMemory {
         return getState(key, gameTime) == CellState.VISITED;
     }
 
+    /** Records that a soldier just threaded a route toward its goal. */
+    public void recordRouteFound(long gameTime) {
+        lastRouteFoundTick = gameTime;
+    }
+
+    /** True if the team has a fresh route; while false, ignorers go rogue. */
+    public boolean routeFoundRecently(long gameTime) {
+        return lastRouteFoundTick != Long.MIN_VALUE
+            && gameTime - lastRouteFoundTick <= ROUTE_MEMORY_TICKS;
+    }
+
     public int size() {
         return cells.size();
     }
@@ -106,6 +136,22 @@ public final class TeamNavMemory {
     public void clear() {
         cells.clear();
         writeOrder.clear();
+        lastRouteFoundTick = Long.MIN_VALUE;
+    }
+
+    /** Visitor for debug iteration over live cells. */
+    public interface CellVisitor {
+        void accept(long key, CellState state, byte flow);
+    }
+
+    /** Iterates live (non-expired) cells — debug tooling only, O(n). */
+    public void forEachLiveCell(long gameTime, CellVisitor visitor) {
+        for (Map.Entry<Long, Cell> entry : cells.entrySet()) {
+            Cell cell = entry.getValue();
+            if (gameTime - cell.writtenAt <= ENTRY_TTL_TICKS) {
+                visitor.accept(entry.getKey(), cell.state, cell.flow);
+            }
+        }
     }
 
     private Cell getOrCreate(long key, long gameTime) {

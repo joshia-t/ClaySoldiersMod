@@ -165,6 +165,7 @@ public class ClaySoldierEntity extends Entity {
     private static final int EXPLORE_TIMEOUT_TICKS = 1200;
     private static final int EXPLORE_PROGRESS_TICKS_TO_EXIT = 100;
     private static final double EXPLORE_GOAL_REACHED_SQ = 4.0;
+    private static final int EXPLORE_TRAIL_MAX = 64;
 
     private static final byte FLAG_BRICK = 0x02;
     private static final byte FLAG_NEXUS_SUMMON = 0x04;
@@ -225,6 +226,12 @@ public class ClaySoldierEntity extends Entity {
     private double exploreBestGoalDistSq;
     private int stuckTicks;
     private double stuckBaselineDistSq;
+    // Cells traversed this exploration, in order. On a successful escape the
+    // soldier stamps forward flow vectors along it so the rest of the stuck
+    // group can follow the breadcrumbs out (swarm AI: "lead others out").
+    private final java.util.ArrayDeque<Long> exploreTrail = new java.util.ArrayDeque<>();
+    // Test override for the "naughty ignorer" role; null = id-based default.
+    private Boolean mazeIgnorerOverride;
     // True while a player remote-controls this soldier; AI is suspended. Transient.
     private boolean possessed;
     // Remaining doll revivals this soldier carries into its next death (issue #8).
@@ -2497,6 +2504,24 @@ public class ClaySoldierEntity extends Entity {
         return exploring;
     }
 
+    /** One-line exploration/role summary for the debug inspect command. */
+    public String describeExploreState() {
+        String dir = switch (exploreDir) {
+            case io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_EAST -> "E";
+            case io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_WEST -> "W";
+            case io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_SOUTH -> "S";
+            case io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NORTH -> "N";
+            default -> "-";
+        };
+        int navSize = level().isClientSide() ? -1
+            : io.github.joshiat.claylegion.entity.nav.TeamNavIndex.get(level()).forTeam(getTeamId()).size();
+        return "exploring=" + exploring
+            + (isMazeIgnorer() ? " (ignorer)" : "")
+            + ", dir=" + dir
+            + ", stuck=" + stuckTicks
+            + ", teamNavCells=" + navSize;
+    }
+
     /**
      * Stuck detection: a chase that keeps colliding with geometry without
      * closing distance to its goal flips the soldier into exploration mode.
@@ -2545,10 +2570,21 @@ public class ClaySoldierEntity extends Entity {
         exploreBestGoalDistSq = dx * dx + dz * dz;
         exploreDir = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
         exploreLastCellKey = Long.MIN_VALUE;
+        exploreTrail.clear();
         stuckTicks = 0;
         // Direct pursuit failed; the goal snapshot carries the intent instead.
         cachedTarget = null;
         clearTargetMemory();
+    }
+
+    /** ~25% of soldiers ignore the swarm's "blocked" markers to re-probe. */
+    private boolean isMazeIgnorer() {
+        return mazeIgnorerOverride != null ? mazeIgnorerOverride : (getId() & 3) == 0;
+    }
+
+    /** Test hook to pin a soldier's naughty-ignorer role. */
+    public void forceMazeIgnorer(boolean ignorer) {
+        this.mazeIgnorerOverride = ignorer;
     }
 
     private void exitExploration() {
@@ -2566,8 +2602,52 @@ public class ClaySoldierEntity extends Entity {
         exploreDir = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
         stuckTicks = 0;
         if (restoreGoalAsRumor) {
+            // Found a way toward the goal: leave breadcrumbs for the group and
+            // tell the team a route exists (quiets the naughty ignorers).
+            layExitTrail(level().getGameTime());
             updateTargetMemory(exploreGoalX, getY(), exploreGoalZ, 0.6f, level().getGameTime());
         }
+        exploreTrail.clear();
+    }
+
+    /**
+     * Stamps forward flow vectors along the just-walked trail so teammates
+     * still stuck in the maze can follow the breadcrumbs out, and marks the
+     * team's route as fresh.
+     */
+    private void layExitTrail(long gameTime) {
+        if (exploreTrail.size() < 2) {
+            return;
+        }
+        var nav = io.github.joshiat.claylegion.entity.nav.TeamNavIndex.get(level()).forTeam(getTeamId());
+        Long[] trail = exploreTrail.toArray(new Long[0]);
+        for (int i = 0; i < trail.length - 1; i++) {
+            byte dir = cardinalBetween(trail[i], trail[i + 1]);
+            if (dir != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+                // Last write wins: the final time we left a cell was toward the
+                // exit, so overlapping dead-end excursions get corrected.
+                nav.setFlow(trail[i], dir, gameTime);
+            }
+        }
+        nav.recordRouteFound(gameTime);
+    }
+
+    /** Cardinal flow from cell a to adjacent cell b, or NONE if not a unit step. */
+    private static byte cardinalBetween(long a, long b) {
+        int dx = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.unpackX(b)
+            - io.github.joshiat.claylegion.entity.nav.TeamNavMemory.unpackX(a);
+        int dy = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.unpackY(b)
+            - io.github.joshiat.claylegion.entity.nav.TeamNavMemory.unpackY(a);
+        int dz = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.unpackZ(b)
+            - io.github.joshiat.claylegion.entity.nav.TeamNavMemory.unpackZ(a);
+        if (dy != 0) {
+            return io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
+        }
+        if (dx == 1 && dz == 0) return io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_EAST;
+        if (dx == -1 && dz == 0) return io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_WEST;
+        if (dx == 0 && dz == 1) return io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_SOUTH;
+        if (dx == 0 && dz == -1) return io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NORTH;
+        return io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
     }
 
     /**
@@ -2606,6 +2686,7 @@ public class ClaySoldierEntity extends Entity {
         if (newCell) {
             nav.markVisited(cellKey, gameTime);
             exploreLastCellKey = cellKey;
+            recordTrailCell(cellKey);
 
             // Someone already mapped this cell's way forward: follow the flow.
             byte flow = nav.getFlow(cellKey, gameTime);
@@ -2650,8 +2731,18 @@ public class ClaySoldierEntity extends Entity {
     }
 
     /**
-     * Picks the most promising unvisited, unblocked, walkable cardinal —
-     * preferring the one pointing at the goal. FLOW_NONE means dead end.
+     * Choose the next exploration heading. Three passes, in priority order:
+     * <ol>
+     *   <li>Fresh ground — an unvisited, unblocked walkable cardinal, picked
+     *       by goal alignment. Normal exploration.</li>
+     *   <li>Breadcrumb — a visited neighbor carrying a flow vector (a route a
+     *       teammate already mapped). This is how a stuck soldier latches onto
+     *       the trail the exit-finder left and gets led out.</li>
+     *   <li>Naughty re-probe — only for ignorer soldiers while the team has no
+     *       fresh route: step onto blocked/visited cells anyway (heavily
+     *       penalized) to retest stale seals after a world change.</li>
+     * </ol>
+     * Returns FLOW_NONE only when truly boxed in (a real dead end).
      */
     private byte chooseExploreDirection(io.github.joshiat.claylegion.entity.nav.TeamNavMemory nav,
                                         long gameTime, byte excludedDir, double goalDx, double goalDz) {
@@ -2659,8 +2750,15 @@ public class ClaySoldierEntity extends Entity {
         double goalNx = goalLen > 1.0E-6 ? goalDx / goalLen : 0.0;
         double goalNz = goalLen > 1.0E-6 ? goalDz / goalLen : 0.0;
 
-        byte best = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
-        double bestScore = -Double.MAX_VALUE;
+        byte fresh = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
+        double freshScore = -Double.MAX_VALUE;
+        byte breadcrumb = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
+        double breadcrumbScore = -Double.MAX_VALUE;
+        byte reprobe = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
+        double reprobeScore = -Double.MAX_VALUE;
+
+        boolean naughty = isMazeIgnorer() && !nav.routeFoundRecently(gameTime);
+
         for (byte dir = 0; dir < 4; dir++) {
             if (dir == excludedDir) {
                 continue;
@@ -2672,17 +2770,48 @@ public class ClaySoldierEntity extends Entity {
             }
             long neighborKey = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
                 getBlockX() + dx, getBlockY(), getBlockZ() + dz);
-            if (nav.isBlocked(neighborKey, gameTime) || nav.isVisited(neighborKey, gameTime)) {
-                continue;
-            }
+            boolean blocked = nav.isBlocked(neighborKey, gameTime);
+            boolean visited = nav.isVisited(neighborKey, gameTime);
+            double goalScore = dx * goalNx + dz * goalNz + getRandom().nextDouble() * 0.2;
 
-            double score = dx * goalNx + dz * goalNz + getRandom().nextDouble() * 0.2;
-            if (score > bestScore) {
-                bestScore = score;
-                best = dir;
+            if (!blocked && !visited) {
+                if (goalScore > freshScore) {
+                    freshScore = goalScore;
+                    fresh = dir;
+                }
+            } else if (visited && !blocked
+                && nav.getFlow(neighborKey, gameTime)
+                    != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+                if (goalScore > breadcrumbScore) {
+                    breadcrumbScore = goalScore;
+                    breadcrumb = dir;
+                }
+            } else if (naughty) {
+                // Penalize so re-probes are a genuine last resort.
+                double penalty = blocked ? -4.0 : -2.0;
+                double score = goalScore + penalty;
+                if (score > reprobeScore) {
+                    reprobeScore = score;
+                    reprobe = dir;
+                }
             }
         }
-        return best;
+
+        if (fresh != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+            return fresh;
+        }
+        if (breadcrumb != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+            return breadcrumb;
+        }
+        return reprobe;
+    }
+
+    /** Append a cell to the exploration trail, bounding its memory footprint. */
+    private void recordTrailCell(long cellKey) {
+        exploreTrail.addLast(cellKey);
+        while (exploreTrail.size() > EXPLORE_TRAIL_MAX) {
+            exploreTrail.pollFirst();
+        }
     }
 
     /**

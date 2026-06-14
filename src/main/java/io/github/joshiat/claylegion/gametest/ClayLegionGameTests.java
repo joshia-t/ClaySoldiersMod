@@ -561,6 +561,84 @@ public final class ClayLegionGameTests {
         });
     }
 
+    /**
+     * After a soldier escapes the corridor, it must leave a breadcrumb trail —
+     * forward flow vectors on VISITED cells — so the rest of the stuck group
+     * can follow it out, and flag the team's route as found.
+     */
+    @GameTest(structure = ARENA_LARGE, maxTicks = 900, padding = 12)
+    public void explorationLeavesBreadcrumbTrailForGroup(GameTestHelper helper) {
+        for (int z = 0; z <= 6; z++) {
+            placeWall(helper, 2, z);
+            placeWall(helper, 4, z);
+        }
+
+        ClaySoldierEntity soldier = spawnSoldierAt(helper, 44, 3.5, 4.5);
+        Vec3 goal = helper.absoluteVec(new Vec3(7.5, 1.0, 0.5));
+        var nav = io.github.joshiat.claylegion.entity.nav.TeamNavIndex
+            .get(helper.getLevel()).forTeam(44);
+
+        helper.succeedWhen(() -> {
+            long now = helper.getLevel().getGameTime();
+            soldier.noteEnemySighting(null, goal.x, goal.y, goal.z, 1.0f, now, false);
+
+            if (!nav.routeFoundRecently(now)) {
+                helper.fail("Escaping soldier should flag the team route as found");
+                return;
+            }
+            // A VISITED (not blocked) cell carrying a flow vector can only come
+            // from the forward exit-trail — dead-end flows sit on BLOCKED cells.
+            boolean[] forwardBreadcrumb = {false};
+            nav.forEachLiveCell(now, (key, state, flow) -> {
+                if (state == io.github.joshiat.claylegion.entity.nav.TeamNavMemory.CellState.VISITED
+                    && flow != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+                    forwardBreadcrumb[0] = true;
+                }
+            });
+            if (!forwardBreadcrumb[0]) {
+                helper.fail("Escape should leave a forward breadcrumb trail for the group");
+            }
+        });
+    }
+
+    /**
+     * Naughty ignorers must not be permanently stuck by stale "blocked" intel.
+     * The corridor route is pre-sealed in the team map (simulating a wall the
+     * swarm sealed that has since been removed / mis-sealed); an ignorer with
+     * no known route must still re-probe and escape.
+     */
+    @GameTest(structure = ARENA_LARGE, maxTicks = 900, padding = 12)
+    public void ignorerReprobesStaleSealAndEscapes(GameTestHelper helper) {
+        for (int z = 0; z <= 6; z++) {
+            placeWall(helper, 2, z);
+            placeWall(helper, 4, z);
+        }
+
+        ClaySoldierEntity soldier = spawnSoldierAt(helper, 45, 3.5, 4.5);
+        soldier.forceMazeIgnorer(true);
+        Vec3 goal = helper.absoluteVec(new Vec3(7.5, 1.0, 0.5));
+
+        // Pre-seal the open corridor cells as BLOCKED — stale intel.
+        var nav = io.github.joshiat.claylegion.entity.nav.TeamNavIndex
+            .get(helper.getLevel()).forTeam(45);
+        long t0 = helper.getLevel().getGameTime();
+        for (int z = 4; z <= 8; z++) {
+            BlockPos abs = helper.absolutePos(new BlockPos(3, 1, z));
+            nav.markBlocked(io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
+                abs.getX(), abs.getY(), abs.getZ()), t0);
+        }
+
+        helper.succeedWhen(() -> {
+            long now = helper.getLevel().getGameTime();
+            soldier.noteEnemySighting(null, goal.x, goal.y, goal.z, 1.0f, now, false);
+
+            double soldierRelX = soldier.getX() - helper.absoluteVec(Vec3.ZERO).x;
+            if (soldierRelX < 4.5) {
+                helper.fail("Ignorer should re-probe the stale seal and escape, relX=" + soldierRelX);
+            }
+        });
+    }
+
     private static void placeWall(GameTestHelper helper, int x, int z) {
         helper.setBlock(new BlockPos(x, 1, z), net.minecraft.world.level.block.Blocks.TERRACOTTA);
         helper.setBlock(new BlockPos(x, 2, z), net.minecraft.world.level.block.Blocks.TERRACOTTA);
