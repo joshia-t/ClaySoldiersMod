@@ -218,6 +218,7 @@ public class ClaySoldierEntity extends Entity {
     private double exploreGoalX;
     private double exploreGoalZ;
     private long exploreLastCellKey = Long.MIN_VALUE;
+    private long explorePrevCellKey = Long.MIN_VALUE;
     private int exploreTicks;
     private int exploreProgressTicks;
     // Grace ticks after picking a heading: residual collision from the old
@@ -2570,6 +2571,7 @@ public class ClaySoldierEntity extends Entity {
         exploreBestGoalDistSq = dx * dx + dz * dz;
         exploreDir = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
         exploreLastCellKey = Long.MIN_VALUE;
+        explorePrevCellKey = Long.MIN_VALUE;
         exploreTrail.clear();
         stuckTicks = 0;
         // Direct pursuit failed; the goal snapshot carries the intent instead.
@@ -2685,13 +2687,39 @@ public class ClaySoldierEntity extends Entity {
         boolean newCell = cellKey != exploreLastCellKey;
         if (newCell) {
             nav.markVisited(cellKey, gameTime);
+            explorePrevCellKey = exploreLastCellKey;
             exploreLastCellKey = cellKey;
             recordTrailCell(cellKey);
 
-            // Someone already mapped this cell's way forward: follow the flow.
-            byte flow = nav.getFlow(cellKey, gameTime);
-            if (flow != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
-                exploreDir = flow;
+            boolean naughty = isMazeIgnorer() && !nav.routeFoundRecently(gameTime);
+
+            // Geometric dead-end sealing: a cell with at most one open
+            // (walkable, non-blocked) neighbor is a dead end or a corridor
+            // leading only to one. Seal it and point a flow vector at the way
+            // out. This self-chains back down dead-end corridors as soldiers
+            // retreat, without ever poisoning real junctions (2+ open exits).
+            int openExits = countOpenExits(nav, gameTime);
+            if (openExits <= 1 && !naughty) {
+                nav.markBlocked(cellKey, gameTime);
+                byte out = bestExitDirection(nav, gameTime);
+                if (out != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+                    nav.setFlow(cellKey, out, gameTime);
+                }
+                if (openExits == 0) {
+                    // Truly boxed in: stop vibrating between walls and give up
+                    // this unreachable pursuit (the rumor stays dropped).
+                    exitExploration(false);
+                    return;
+                }
+                // One way out: take it immediately rather than re-deciding.
+                exploreDir = out;
+                exploreCommitTicks = 4;
+            } else {
+                // Someone already mapped this cell's way forward: follow it.
+                byte flow = nav.getFlow(cellKey, gameTime);
+                if (flow != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+                    exploreDir = flow;
+                }
             }
         }
 
@@ -2709,16 +2737,15 @@ public class ClaySoldierEntity extends Entity {
             exploreDir = chooseExploreDirection(nav, gameTime, excluded, goalDx, goalDz);
 
             if (exploreDir == io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
-                // Dead end: seal this cell for the whole team and backtrack,
-                // leaving a flow vector pointing the way out for followers.
-                nav.markBlocked(cellKey, gameTime);
-                byte back = chooseBacktrackDirection(nav, gameTime);
-                if (back == io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
-                    exitExploration(); // fully boxed in; give up gracefully
+                // No open move from here (every exit walls or blocked). Fall
+                // back to the geometric exit (walking back the way we came);
+                // if even that fails we are sealed in — bail.
+                byte out = bestExitDirection(nav, gameTime);
+                if (out == io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+                    exitExploration(false);
                     return;
                 }
-                nav.setFlow(cellKey, back, gameTime);
-                exploreDir = back;
+                exploreDir = out;
             }
             exploreCommitTicks = 4;
         }
@@ -2730,19 +2757,39 @@ public class ClaySoldierEntity extends Entity {
         chasePosition(new Vec3(getX() + dirX * 3.0, getY(), getZ() + dirZ * 3.0));
     }
 
+    /** Count walkable, non-blocked cardinal neighbors (the cell's real exits). */
+    private int countOpenExits(io.github.joshiat.claylegion.entity.nav.TeamNavMemory nav, long gameTime) {
+        int count = 0;
+        for (byte dir = 0; dir < 4; dir++) {
+            int dx = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDx(dir);
+            int dz = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDz(dir);
+            if (!canStepTo(getBlockX() + dx, getBlockY(), getBlockZ() + dz)) {
+                continue;
+            }
+            long key = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
+                getBlockX() + dx, getBlockY(), getBlockZ() + dz);
+            if (!nav.isBlocked(key, gameTime)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     /**
-     * Choose the next exploration heading. Three passes, in priority order:
+     * Choose the next exploration heading. Priority:
      * <ol>
-     *   <li>Fresh ground — an unvisited, unblocked walkable cardinal, picked
-     *       by goal alignment. Normal exploration.</li>
-     *   <li>Breadcrumb — a visited neighbor carrying a flow vector (a route a
-     *       teammate already mapped). This is how a stuck soldier latches onto
-     *       the trail the exit-finder left and gets led out.</li>
-     *   <li>Naughty re-probe — only for ignorer soldiers while the team has no
-     *       fresh route: step onto blocked/visited cells anyway (heavily
-     *       penalized) to retest stale seals after a world change.</li>
+     *   <li>Fresh ground — an unvisited, unblocked, reachable cardinal, by
+     *       goal alignment. The exploration frontier.</li>
+     *   <li>Traverse — step through a visited (open) neighbor toward the goal,
+     *       avoiding an immediate U-turn. This lets a soldier walk back across
+     *       mapped territory to reach an unexplored pocket behind it, instead
+     *       of falsely sealing a good corridor and ping-ponging.</li>
+     *   <li>Naughty re-probe — ignorer soldiers with no known route step onto
+     *       blocked cells anyway (heavily penalized) to retest stale seals.</li>
      * </ol>
-     * Returns FLOW_NONE only when truly boxed in (a real dead end).
+     * Reachability is jump-aware: a one-block ledge counts as walkable because
+     * chase movement's jump-assist climbs it. Returns FLOW_NONE only when no
+     * such move exists.
      */
     private byte chooseExploreDirection(io.github.joshiat.claylegion.entity.nav.TeamNavMemory nav,
                                         long gameTime, byte excludedDir, double goalDx, double goalDz) {
@@ -2752,8 +2799,8 @@ public class ClaySoldierEntity extends Entity {
 
         byte fresh = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
         double freshScore = -Double.MAX_VALUE;
-        byte breadcrumb = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
-        double breadcrumbScore = -Double.MAX_VALUE;
+        byte traverse = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
+        double traverseScore = -Double.MAX_VALUE;
         byte reprobe = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
         double reprobeScore = -Double.MAX_VALUE;
 
@@ -2765,11 +2812,12 @@ public class ClaySoldierEntity extends Entity {
             }
             int dx = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDx(dir);
             int dz = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDz(dir);
-            if (!isWalkableCell(getBlockX() + dx, getBlockY(), getBlockZ() + dz)) {
+            int targetY = stepTargetY(getBlockX() + dx, getBlockY(), getBlockZ() + dz);
+            if (targetY == NO_STEP) {
                 continue;
             }
             long neighborKey = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
-                getBlockX() + dx, getBlockY(), getBlockZ() + dz);
+                getBlockX() + dx, targetY, getBlockZ() + dz);
             boolean blocked = nav.isBlocked(neighborKey, gameTime);
             boolean visited = nav.isVisited(neighborKey, gameTime);
             double goalScore = dx * goalNx + dz * goalNz + getRandom().nextDouble() * 0.2;
@@ -2779,17 +2827,20 @@ public class ClaySoldierEntity extends Entity {
                     freshScore = goalScore;
                     fresh = dir;
                 }
-            } else if (visited && !blocked
-                && nav.getFlow(neighborKey, gameTime)
-                    != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
-                if (goalScore > breadcrumbScore) {
-                    breadcrumbScore = goalScore;
-                    breadcrumb = dir;
+            } else if (!blocked) {
+                // Visited but open: traversable. Discourage immediately
+                // reversing into the cell we just came from so the soldier
+                // keeps flowing across mapped ground instead of vibrating.
+                double score = goalScore;
+                if (neighborKey == explorePrevCellKey) {
+                    score -= 1.0;
+                }
+                if (score > traverseScore) {
+                    traverseScore = score;
+                    traverse = dir;
                 }
             } else if (naughty) {
-                // Penalize so re-probes are a genuine last resort.
-                double penalty = blocked ? -4.0 : -2.0;
-                double score = goalScore + penalty;
+                double score = goalScore - 4.0; // blocked re-probe: last resort
                 if (score > reprobeScore) {
                     reprobeScore = score;
                     reprobe = dir;
@@ -2800,8 +2851,8 @@ public class ClaySoldierEntity extends Entity {
         if (fresh != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
             return fresh;
         }
-        if (breadcrumb != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
-            return breadcrumb;
+        if (traverse != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE) {
+            return traverse;
         }
         return reprobe;
     }
@@ -2815,35 +2866,61 @@ public class ClaySoldierEntity extends Entity {
     }
 
     /**
-     * Backtrack heading: prefer a visited-but-open neighbor; failing that,
-     * walk back through an already-blocked cell — blocked branches are still
-     * physically walkable, and retreating through them is how you exit one.
+     * The single way out of a (near) dead end: prefer an open non-blocked
+     * neighbor; failing that walk back through a blocked cell (still physically
+     * walkable). Used both to flow-tag sealed cells and to escape them.
      */
-    private byte chooseBacktrackDirection(io.github.joshiat.claylegion.entity.nav.TeamNavMemory nav,
-                                          long gameTime) {
+    private byte bestExitDirection(io.github.joshiat.claylegion.entity.nav.TeamNavMemory nav, long gameTime) {
+        byte open = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
         byte blockedFallback = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE;
         for (byte dir = 0; dir < 4; dir++) {
             int dx = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDx(dir);
             int dz = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.flowDz(dir);
-            if (!isWalkableCell(getBlockX() + dx, getBlockY(), getBlockZ() + dz)) {
+            int targetY = stepTargetY(getBlockX() + dx, getBlockY(), getBlockZ() + dz);
+            if (targetY == NO_STEP) {
                 continue;
             }
             long neighborKey = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
-                getBlockX() + dx, getBlockY(), getBlockZ() + dz);
-            if (nav.isVisited(neighborKey, gameTime)) {
+                getBlockX() + dx, targetY, getBlockZ() + dz);
+            if (!nav.isBlocked(neighborKey, gameTime)) {
                 return dir;
             }
-            if (nav.isBlocked(neighborKey, gameTime)) {
-                blockedFallback = dir;
-            }
+            blockedFallback = dir;
         }
-        return blockedFallback;
+        return open != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.FLOW_NONE ? open : blockedFallback;
     }
 
-    /** Cheap walkability: the cell's own block has no collision shape. */
-    private boolean isWalkableCell(int x, int y, int z) {
+    private static final int NO_STEP = Integer.MIN_VALUE;
+
+    /**
+     * Foot-Y the soldier would occupy stepping into column (nx,nz) from foot-Y
+     * ny, or {@link #NO_STEP} if impassable. Accepts flat moves, one-block
+     * drops, and one-block step-ups (jump-assist climbs the latter) — so
+     * ledges register as valid routes during exploration.
+     */
+    private int stepTargetY(int nx, int ny, int nz) {
+        if (isPassableCell(nx, ny, nz)) {
+            // Flat if there is a floor; otherwise a one-block drop.
+            if (!isPassableCell(nx, ny - 1, nz)) {
+                return ny;
+            }
+            return ny - 1;
+        }
+        // Feet blocked but the space above is open: a climbable one-block ledge.
+        if (isPassableCell(nx, ny + 1, nz)) {
+            return ny + 1;
+        }
+        return NO_STEP;
+    }
+
+    /** True if a creature could occupy this cell (no solid collision shape). */
+    private boolean isPassableCell(int x, int y, int z) {
         net.minecraft.core.BlockPos pos = new net.minecraft.core.BlockPos(x, y, z);
         return level().getBlockState(pos).getCollisionShape(level(), pos).isEmpty();
+    }
+
+    private boolean canStepTo(int nx, int ny, int nz) {
+        return stepTargetY(nx, ny, nz) != NO_STEP;
     }
 
     private void applyIdleBraking() {

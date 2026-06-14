@@ -639,6 +639,92 @@ public final class ClayLegionGameTests {
         });
     }
 
+    /**
+     * Exploration must treat a one-block ledge as a valid route (jump-assist
+     * climbs it), not a wall. The only way toward the goal is up a single
+     * step; the soldier should mount it and make progress.
+     */
+    @GameTest(structure = ARENA_LARGE, maxTicks = 900, padding = 12)
+    public void explorationClimbsOneBlockLedges(GameTestHelper helper) {
+        // Wall off everything except a 1-block step east at column x=4.
+        for (int z = 0; z <= 8; z++) {
+            placeWall(helper, 2, z);
+        }
+        for (int x = 0; x <= 8; x++) {
+            placeWall(helper, x, 1);   // south boundary
+            placeWall(helper, x, 7);   // north boundary
+        }
+        // A single raised step (1 high) spanning the corridor at x=4; floor
+        // beyond it is one block higher, reachable only by jumping up.
+        for (int z = 2; z <= 6; z++) {
+            helper.setBlock(new BlockPos(4, 1, z), net.minecraft.world.level.block.Blocks.SMOOTH_STONE);
+            helper.setBlock(new BlockPos(5, 1, z), net.minecraft.world.level.block.Blocks.SMOOTH_STONE);
+            helper.setBlock(new BlockPos(6, 1, z), net.minecraft.world.level.block.Blocks.SMOOTH_STONE);
+        }
+
+        ClaySoldierEntity soldier = spawnSoldierAt(helper, 46, 3.5, 4.5);
+        Vec3 goal = helper.absoluteVec(new Vec3(7.5, 2.0, 4.5));
+
+        helper.succeedWhen(() -> {
+            long now = helper.getLevel().getGameTime();
+            soldier.noteEnemySighting(null, goal.x, goal.y, goal.z, 1.0f, now, false);
+            // Climbed the step: standing on the raised floor (y >= 2).
+            if (soldier.getY() < helper.absoluteVec(new Vec3(0, 2.0, 0)).y - 0.1) {
+                helper.fail("Soldier should jump the one-block ledge, y="
+                    + (soldier.getY() - helper.absoluteVec(Vec3.ZERO).y));
+            }
+        });
+    }
+
+    /**
+     * The swarm must be able to walk THROUGH its own known-open territory to
+     * reach the frontier. The cells around the soldier are pre-marked VISITED;
+     * an exploring soldier must traverse them (not refuse them and false-seal,
+     * the old bug that left whole sections never visited) to map fresh ground
+     * two cells out.
+     */
+    @GameTest(structure = ARENA_LARGE, maxTicks = 900, padding = 12)
+    public void explorationTraversesVisitedGroundToReachFrontier(GameTestHelper helper) {
+        // One wall east of the soldier triggers "stuck" (the goal is east) so
+        // it enters exploration; the rest of the floor is open.
+        placeWall(helper, 5, 4);
+
+        ClaySoldierEntity soldier = spawnSoldierAt(helper, 48, 4.5, 4.5);
+        Vec3 goal = helper.absoluteVec(new Vec3(8.5, 1.0, 4.5));
+
+        var nav = io.github.joshiat.claylegion.entity.nav.TeamNavIndex
+            .get(helper.getLevel()).forTeam(48);
+        long t0 = helper.getLevel().getGameTime();
+        // Surround the soldier with already-mapped (visited) cells.
+        int[][] ring = {{3, 4}, {4, 3}, {4, 5}};
+        for (int[] c : ring) {
+            BlockPos abs = helper.absolutePos(new BlockPos(c[0], 1, c[1]));
+            nav.markVisited(io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
+                abs.getX(), abs.getY(), abs.getZ()), t0);
+        }
+        // Fresh frontier cells two steps out, beyond the visited ring.
+        int[][] frontier = {{4, 2}, {2, 4}, {4, 6}};
+
+        helper.succeedWhen(() -> {
+            long now = helper.getLevel().getGameTime();
+            soldier.noteEnemySighting(null, goal.x, goal.y, goal.z, 1.0f, now, false);
+
+            boolean reached = false;
+            for (int[] c : frontier) {
+                BlockPos abs = helper.absolutePos(new BlockPos(c[0], 1, c[1]));
+                long key = io.github.joshiat.claylegion.entity.nav.TeamNavMemory.pack(
+                    abs.getX(), abs.getY(), abs.getZ());
+                if (nav.getState(key, now)
+                    != io.github.joshiat.claylegion.entity.nav.TeamNavMemory.CellState.UNKNOWN) {
+                    reached = true;
+                }
+            }
+            if (!reached) {
+                helper.fail("Soldier should traverse the visited ring to map a frontier cell");
+            }
+        });
+    }
+
     private static void placeWall(GameTestHelper helper, int x, int z) {
         helper.setBlock(new BlockPos(x, 1, z), net.minecraft.world.level.block.Blocks.TERRACOTTA);
         helper.setBlock(new BlockPos(x, 2, z), net.minecraft.world.level.block.Blocks.TERRACOTTA);
@@ -652,6 +738,9 @@ public final class ClayLegionGameTests {
             throw new IllegalStateException("Failed to create Clay Soldier entity");
         }
         soldier.setTeamId(teamId);
+        // Deterministic role: entity ids aren't controllable in tests, and the
+        // ignorer role gates sealing behavior. Tests that want an ignorer opt in.
+        soldier.forceMazeIgnorer(false);
         Vec3 pos = helper.absoluteVec(new Vec3(relX, 1.0, relZ));
         soldier.setPos(pos.x, pos.y, pos.z);
         level.addFreshEntity(soldier);
